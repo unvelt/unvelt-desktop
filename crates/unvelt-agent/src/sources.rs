@@ -106,7 +106,9 @@ pub const CATALOGUE: &[(&str, &str, &str, &str, bool)] = &[
         "The app that sent each notification, and when. Never the title and \
          never the message — the query that reads them cannot return the \
          content at all, which is checked by a test rather than promised in a \
-         document.",
+         document. On a Mac this needs Full Disk Access, which macOS will ask \
+         you for; on Windows it needs no permission at all, which is why this \
+         switch exists.",
         false,
     ),
     (

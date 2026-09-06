@@ -49,6 +49,7 @@ mod focus;
 mod location;
 mod media;
 mod notif;
+mod notif_mac;
 mod power;
 mod session;
 
@@ -57,6 +58,7 @@ pub use focus::FocusHandler;
 pub use location::LocationHandler;
 pub use media::{probe as media_probe, MediaHandler, Now as NowPlaying};
 pub use notif::NotifHandler;
+pub use notif_mac::MacNotifHandler;
 pub use power::PowerHandler;
 pub use session::SessionHandler;
 
@@ -73,7 +75,14 @@ pub fn build_default(cfg: &Config) -> Vec<Box<dyn Handler>> {
         // event vocabulary, so these are the same `notif.posted` and
         // `media.play` the phone sends and they feed the intervals and
         // metrics that already exist.
+        //
+        // Two notification readers, one switch. Both report `name() ==
+        // "notif"`, because a person's answer to "may this machine see my
+        // notifications" should not depend on which OS they are sitting at.
+        #[cfg(windows)]
         Box::new(NotifHandler::new(cfg)),
+        #[cfg(target_os = "macos")]
+        Box::new(MacNotifHandler::new(cfg)),
         Box::new(MediaHandler::new(cfg)),
     ]
 }
