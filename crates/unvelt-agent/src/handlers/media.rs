@@ -245,17 +245,112 @@ fn current() -> Result<Option<Now>, String> {
 /// I generalised "a normal app gets nothing" into "nothing gets it", which was
 /// wrong.
 ///
-/// This build still does not use it: it is private API reached through a
-/// code-signing loophole in a system binary, either half of which Apple can
-/// close in any release, and shipping an OS exploit inside a
-/// telemetry-collecting app that auto-updates on other people's machines is a
-/// different proposition from running it on your own. If that trade is taken,
-/// it belongs behind its own opt-in, off by default, degrading to this
-/// AppleScript path when the loophole is gone -- not folded in here silently.
-/// Meanwhile `audible.rs` still counts browser audio through Core Audio as
-/// time an app spent making sound, without a title.
+/// So the way it is reached matters. unvelt ships NONE of the loophole. It
+/// shells out to `media-control` (Homebrew: `ungive/media-control`), which
+/// carries the mediaremote-adapter dylib and the perl loader, if that tool is
+/// installed -- the cask declares it a dependency, so a brew install has it.
+/// The code-signing trick is then ungive's to maintain and Apple's to close,
+/// and the day it closes this degrades to the AppleScript path below rather
+/// than breaking: a Mac with the tool sees browser tracks, a Mac without it
+/// sees Spotify and Music, and neither carries an exploit we wrote.
+///
+/// It stays under the one `media` switch rather than a new one, because the
+/// question a person answered -- "you may see what I listen to" -- is the same
+/// question whether the track is in Spotify or a browser tab. The one real
+/// consequence is that on a Mac with `media-control`, that switch now also
+/// captures YouTube and the like, which it could not before; the cost line on
+/// the switch already says "where the app publishes to the system media
+/// controls", which is exactly what a browser does here.
 #[cfg(target_os = "macos")]
 fn current() -> Result<Option<Now>, String> {
+    // media-control first: it reports every app registered with the system
+    // now-playing, browsers included. Only when it is absent or unreadable do
+    // we fall back to AppleScript, which reaches Spotify and Music alone.
+    match media_control() {
+        Some(res) => res,
+        None => applescript_now(),
+    }
+}
+
+/// `Some` when `media-control` was present and answered -- authoritatively,
+/// including `Some(Ok(None))` for "nothing is playing". `None` only when the
+/// tool is not installed or gave output we could not parse, which is the sole
+/// case that should fall through to AppleScript.
+#[cfg(target_os = "macos")]
+fn media_control() -> Option<Result<Option<Now>, String>> {
+    let bin = media_control_bin()?;
+    let out = crate::backend::run(&bin, &["get"]);
+    // The tool IS present, so its answer is authoritative either way: a track,
+    // or a real "nothing playing". Only unparseable output falls through, and
+    // parse_media_control draws that line.
+    Some(Ok(parse_media_control(out.trim())?))
+}
+
+/// The pure half, so the JSON contract is testable without a Mac.
+///
+/// `None` means "unusable output, fall back to AppleScript"; `Some(None)`
+/// means the tool answered and nothing is playing; `Some(Some)` is a track.
+#[cfg(any(target_os = "macos", test))]
+fn parse_media_control(out: &str) -> Option<Option<Now>> {
+    if out.is_empty() {
+        return Some(None);
+    }
+    let v: serde_json::Value = serde_json::from_str(out).ok()?;
+    // `get` prints the payload at the top level; `stream` wraps it under
+    // `payload`. Tolerate both so a version bump that changes which one `get`
+    // emits does not silently stop collecting.
+    let p = v.get("payload").unwrap_or(&v);
+    let s = |k: &str| {
+        p.get(k)
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("")
+            .to_string()
+    };
+    let (title, app) = (s("title"), s("bundleIdentifier"));
+    if title.is_empty() && app.is_empty() {
+        return Some(None);
+    }
+    // Play vs pause, from whichever field this version uses. A loaded-but-
+    // paused track must not read as playing, so a missing field is only
+    // treated as playing when there is nothing better -- confirmed against
+    // real output before this is trusted.
+    let playing = p
+        .get("playing")
+        .and_then(serde_json::Value::as_bool)
+        .or_else(|| {
+            p.get("playbackRate")
+                .and_then(serde_json::Value::as_f64)
+                .map(|r| r > 0.0)
+        })
+        .unwrap_or(true);
+    Some(Some(Now {
+        app,
+        title,
+        artist: s("artist"),
+        album: s("album"),
+        playing,
+        // artworkData is deliberately never read: unvelt stores no cover art.
+    }))
+}
+
+/// The `media-control` binary, or `None` if it is not installed.
+///
+/// A GUI app does not inherit the shell PATH, so a bare-name lookup would fail
+/// even with the tool installed. The two Homebrew prefixes are checked
+/// directly instead -- Apple Silicon first, then Intel.
+#[cfg(target_os = "macos")]
+fn media_control_bin() -> Option<String> {
+    [
+        "/opt/homebrew/bin/media-control",
+        "/usr/local/bin/media-control",
+    ]
+    .into_iter()
+    .find(|p| std::path::Path::new(p).exists())
+    .map(str::to_string)
+}
+
+#[cfg(target_os = "macos")]
+fn applescript_now() -> Result<Option<Now>, String> {
     const SCRIPT: &str = r#"on q(a)
   tell application "System Events"
     if not (exists process a) then return ""
@@ -311,6 +406,50 @@ fn current() -> Result<Option<Now>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn media_control_get_top_level_shape() {
+        // What `media-control get` emits: the payload at the top level. A
+        // browser track is the whole point -- Spotify already has an
+        // AppleScript path, and this is the signal that one cannot reach.
+        let out = r#"{"bundleIdentifier":"com.google.Chrome","title":"Some Song",
+            "artist":"An Artist","album":"An Album","playing":true,
+            "artworkData":"iVBORw0KGgoAAAA=="}"#;
+        let now = parse_media_control(out).unwrap().unwrap();
+        assert_eq!(now.app, "com.google.Chrome");
+        assert_eq!(now.title, "Some Song");
+        assert_eq!(now.artist, "An Artist");
+        assert_eq!(now.album, "An Album");
+        assert!(now.playing);
+    }
+
+    #[test]
+    fn media_control_stream_payload_wrapper_and_playback_rate() {
+        // The `stream` shape wraps the same fields under `payload`, and some
+        // versions carry play state as a rate rather than a bool. Both are
+        // tolerated so a format the field research could not pin down does not
+        // silently collect nothing.
+        let out = r#"{"diff":false,"payload":{"bundleIdentifier":"com.apple.Safari",
+            "title":"Paused Track","artist":"X","playbackRate":0.0}}"#;
+        let now = parse_media_control(out).unwrap().unwrap();
+        assert_eq!(now.app, "com.apple.Safari");
+        assert!(!now.playing, "playbackRate 0 must read as paused");
+    }
+
+    #[test]
+    fn media_control_nothing_playing_is_not_a_fallback() {
+        // Empty output and an empty payload both mean "the tool answered,
+        // nothing is playing" -- Some(None). Only genuinely unparseable output
+        // returns None, which is the sole trigger to fall back to AppleScript.
+        assert_eq!(parse_media_control(""), Some(None));
+        assert_eq!(parse_media_control("{}"), Some(None));
+        assert_eq!(
+            parse_media_control(r#"{"title":"","bundleIdentifier":""}"#),
+            Some(None)
+        );
+        assert_eq!(parse_media_control("not json at all"), None);
+        assert_eq!(parse_media_control("<html>error</html>"), None);
+    }
 
     #[test]
     fn a_play_event_omits_fields_the_app_never_set() {
