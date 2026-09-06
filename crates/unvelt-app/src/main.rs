@@ -27,7 +27,8 @@ use tauri::tray::TrayIconBuilder;
 use tauri::{Emitter, Manager};
 
 use unvelt_agent::{
-    auth, backend, client, config, controller, handlers, instance, sources, spool, Probe, Status,
+    allowlist, auth, backend, client, config, controller, handlers, instance, sources, spool,
+    Probe, Status,
 };
 
 /// What the commands are allowed to reach.
@@ -39,6 +40,7 @@ struct App {
     status: Arc<Mutex<Status>>,
     paused: Arc<AtomicBool>,
     toggles: sources::Toggles,
+    allow: allowlist::Allowlist,
     cfg: config::Config,
     /// False when another unvelt already holds the collector lock. This
     /// instance then shows the window and reads nothing, rather than
@@ -63,6 +65,40 @@ fn status(app: tauri::State<'_, App>) -> Status {
         st.signed_in = false;
     }
     st
+}
+
+/// Whether this machine launches unvelt at login.
+///
+/// A switch rather than a silent registration. The app's whole argument is
+/// that nothing happens to your machine without you deciding it, and quietly
+/// adding yourself to someone's startup items is exactly the move that
+/// argument is against -- even though continuous collection is the entire
+/// point of the thing.
+#[tauri::command]
+fn autostart(app: tauri::AppHandle) -> bool {
+    use tauri_plugin_autostart::ManagerExt;
+    app.autolaunch().is_enabled().unwrap_or(false)
+}
+
+#[tauri::command]
+fn set_autostart(app: tauri::AppHandle, on: bool) -> bool {
+    use tauri_plugin_autostart::ManagerExt;
+    let mgr = app.autolaunch();
+    let _ = if on { mgr.enable() } else { mgr.disable() };
+    mgr.is_enabled().unwrap_or(false)
+}
+
+/// Apps whose notification CONTENT this machine may keep, and every app that
+/// has notified it, so the choice is made from a list rather than typed.
+#[tauri::command]
+fn content_apps(app: tauri::State<'_, App>) -> (Vec<String>, Vec<String>) {
+    (app.allow.list(), app.allow.seen())
+}
+
+#[tauri::command]
+fn set_content_app(app: tauri::State<'_, App>, id: String, on: bool) -> Vec<String> {
+    app.allow.set(&id, on);
+    app.allow.list()
 }
 
 #[tauri::command]
@@ -137,6 +173,32 @@ async fn login(window: tauri::Window) -> Result<String, String> {
     }
 }
 
+/// Check for a new version, download it, and let it apply on next start.
+///
+/// Deliberately not a prompt. This is a tray app somebody opens once a month,
+/// so an update waiting behind a dialog is an update that never installs --
+/// and an out-of-date collector is one quietly missing signals the current one
+/// reports. It swaps in when the app next starts, which for a login-launched
+/// agent is the next reboot.
+///
+/// Every failure is silent by design. A machine that is offline, or behind a
+/// proxy, or on a network that blocks GitHub, must keep collecting; an update
+/// check is the least important thing this process does.
+async fn check_for_update(app: tauri::AppHandle) {
+    use tauri_plugin_updater::UpdaterExt;
+    let Ok(updater) = app.updater() else { return };
+    let Ok(Some(update)) = updater.check().await else {
+        return;
+    };
+    let version = update.version.clone();
+    if update.download_and_install(|_, _| {}, || {}).await.is_ok() {
+        // Recorded rather than announced: the window can say "0.3.1 installs
+        // when unvelt next starts" the next time somebody looks, and nothing
+        // interrupts them before then.
+        let _ = std::fs::write(config::state_dir().join("update_pending"), &version);
+    }
+}
+
 fn show_window(app: &tauri::AppHandle) {
     if let Some(w) = app.get_webview_window("status") {
         let _ = w.show();
@@ -154,8 +216,27 @@ fn main() {
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             show_window(app);
         }))
+        // `--hidden` so a login launch goes straight to the tray. Without it
+        // the window would appear on every boot, which is how a background
+        // collector becomes something people uninstall.
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec!["--hidden"]),
+        ))
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
-            status, probe, set_paused, login, sources, planned, set_source, sign_out
+            status,
+            probe,
+            set_paused,
+            login,
+            sources,
+            planned,
+            set_source,
+            sign_out,
+            autostart,
+            set_autostart,
+            content_apps,
+            set_content_app
         ])
         .setup(|app| {
             // The controller owns a `Box<dyn Backend>`, which is not Send, so
@@ -218,6 +299,7 @@ fn main() {
                 status,
                 paused: paused.clone(),
                 toggles,
+                allow: allowlist::Allowlist::load(),
                 cfg,
                 collecting,
             });
@@ -236,10 +318,40 @@ fn main() {
                 ],
             )?;
 
+            // On by default, but registered once and never re-asserted: if
+            // someone turns it off, it stays off. A daily "helpfully" re-added
+            // startup entry is malware behaviour.
+            {
+                use tauri_plugin_autostart::ManagerExt;
+                let marker = config::state_dir().join("autostart_asked");
+                if !marker.exists() {
+                    let _ = app.autolaunch().enable();
+                    let _ = std::fs::create_dir_all(config::state_dir());
+                    let _ = std::fs::write(&marker, "1");
+                }
+            }
+
             // Tray-only on every later launch, but not the first. Someone who
             // has never signed in would otherwise get a new icon in a tray of
             // twenty and no reason to think it wanted anything from them.
-            if auth::Session::load(&app.state::<App>().cfg).is_none() || !collecting {
+            //
+            // `--hidden` is what the login launch passes, and it wins over
+            // everything: a boot should never put a window in your face.
+            // Once at startup, then every six hours. A collector that runs
+            // for weeks would otherwise only ever update when someone thought
+            // to restart it.
+            {
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    loop {
+                        check_for_update(handle.clone()).await;
+                        tokio::time::sleep(std::time::Duration::from_secs(6 * 3600)).await;
+                    }
+                });
+            }
+
+            let hidden = std::env::args().any(|a| a == "--hidden");
+            if !hidden && (auth::Session::load(&app.state::<App>().cfg).is_none() || !collecting) {
                 show_window(app.handle());
             }
 

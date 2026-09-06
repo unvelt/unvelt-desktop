@@ -16,6 +16,7 @@
 //! The window is not where the work happens. Closing it must never stop the
 //! loop, so nothing in these modules knows a window exists.
 
+pub mod allowlist;
 pub mod auth;
 pub mod backend;
 pub mod client;

@@ -180,13 +180,39 @@
     </div>
   </section>
 
-  <section>
+  <section id="plannedSection">
     <h3>Not collected yet</h3>
     <p class="lede">
       These are coming. They are listed now so you can see where unvelt is
       going before you decide to keep it.
     </p>
     <div id="planned"></div>
+  </section>
+
+  <section id="contentSection" hidden>
+    <h3>Notification content</h3>
+    <p class="lede">
+      Normally unvelt keeps only which app interrupted you and when. Anything
+      you switch on here also has its <em>title and message</em> kept. Nothing
+      is on unless you put it there, and only apps that have actually
+      interrupted this computer appear.
+    </p>
+    <p class="lede" style="color:var(--off)">
+      Not encrypted yet: this content is stored as plain text. Fine for your own
+      account; it has to change before anyone else is offered this.
+    </p>
+    <div id="contentApps"></div>
+  </section>
+
+  <section>
+    <h3>This computer</h3>
+    <div class="src">
+      <h4>Start unvelt when I log in</h4>
+      <button class="sw" role="switch" id="autostart" aria-label="Start at login"></button>
+      <p>Without this, collection stops at every restart until you open it by
+         hand — and a day with a gap nobody chose is the one thing this is
+         built to avoid.</p>
+    </div>
   </section>
 
   <section>
@@ -285,6 +311,7 @@ async function drawSources() {
 
 async function drawPlanned() {
   const list = await invoke("planned");
+  $("plannedSection").hidden = !list.length;
   $("planned").innerHTML = list.map(([label, gives, costs]) => `
     <div class="src soon">
       <h4>${esc(label)}</h4>
@@ -293,6 +320,51 @@ async function drawPlanned() {
       <p class="cost"><b>Will see:</b> ${esc(costs)}</p>
     </div>`).join("");
 }
+
+async function drawContent() {
+  const [allowed, known] = await invoke("content_apps");
+  const sec = $("contentSection");
+  // Hidden entirely where there is nothing to choose from, rather than shown
+  // as an empty box that looks broken.
+  if (!known.length && !allowed.length) { sec.hidden = true; return; }
+  sec.hidden = false;
+  const rows = known.length ? known : allowed;
+  $("contentApps").innerHTML = rows.map(id => `
+    <div class="src">
+      <h4>${esc(pretty(id))}</h4>
+      <button class="sw" role="switch" data-app="${esc(id)}"
+              aria-checked="${allowed.includes(id)}" aria-label="${esc(pretty(id))}"></button>
+      <p class="cost">${esc(id)}</p>
+    </div>`).join("");
+  $("contentApps").querySelectorAll(".sw").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const on = btn.getAttribute("aria-checked") !== "true";
+      btn.setAttribute("aria-checked", String(on));
+      await invoke("set_content_app", { id: btn.dataset.app, on });
+      drawContent().catch(fatal);
+    });
+  });
+}
+
+// AUMIDs are unreadable. The tail after "!" or the last dotted segment is the
+// part a person recognises; the full id stays visible underneath so nobody has
+// to trust the prettifier.
+function pretty(id) {
+  let s = id.includes("!") ? id.split("!").pop() : id;
+  s = s.replace(/_[a-z0-9]{13}$/, "");
+  const seg = s.split(".").filter(Boolean);
+  return seg.length > 1 ? seg[seg.length - 1] : s;
+}
+
+async function drawAutostart() {
+  const on = await invoke("autostart");
+  $("autostart").setAttribute("aria-checked", String(on));
+}
+$("autostart").addEventListener("click", async () => {
+  const on = $("autostart").getAttribute("aria-checked") !== "true";
+  const now = await invoke("set_autostart", { on });
+  $("autostart").setAttribute("aria-checked", String(now));
+});
 
 async function draw() {
   if (!invoke) return;
@@ -361,6 +433,8 @@ $("signin").addEventListener("click", async () => {
 
 drawSources().catch(fatal);
 drawPlanned().catch(fatal);
+drawContent().catch(fatal);
+drawAutostart().catch(fatal);
 draw().catch(fatal);
 // The window is usually hidden; polling only matters while someone is looking
 // at it, and two seconds is faster than the collector's own five-second tick.

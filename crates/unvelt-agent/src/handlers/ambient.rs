@@ -25,6 +25,7 @@ pub struct AmbientHandler {
     interval: f64,
     last_route: Option<(String, Option<String>)>,
     last_dnd: Option<String>,
+    last_devices: Option<Vec<String>>,
 }
 
 impl AmbientHandler {
@@ -33,6 +34,7 @@ impl AmbientHandler {
             interval: cfg.context_sec as f64,
             last_route: None,
             last_dnd: None,
+            last_devices: None,
         }
     }
 }
@@ -76,6 +78,25 @@ impl Handler for AmbientHandler {
             }
         }
 
+        // Peripherals, in the form that is actually useful: an audio device
+        // appearing is a headset going on or a dock being connected, and both
+        // mean somebody sat down at a desk. Deliberately NOT a full USB
+        // enumeration -- that reports a hundred things nobody cares about,
+        // almost none of which ever change.
+        let devices = playback_devices();
+        if !devices.is_empty() {
+            if let Some(prev) = self.last_devices.replace(devices.clone()) {
+                for name in devices.iter().filter(|d| !prev.contains(d)) {
+                    out.push(peripheral(tick, name, 1));
+                }
+                for name in prev.iter().filter(|d| !devices.contains(d)) {
+                    out.push(peripheral(tick, name, 0));
+                }
+            }
+            // First reading seeds: a headset already plugged in when the agent
+            // started was not plugged in then.
+        }
+
         if let Some((on, mode)) = dnd_state() {
             // Keyed on the pair, not just `on`: moving from a fullscreen game
             // to an explicit Do Not Disturb is a real change even though
@@ -96,17 +117,45 @@ impl Handler for AmbientHandler {
     }
 }
 
+fn peripheral(tick: &Tick, name: &str, on: u8) -> Event {
+    tick.event(
+        "desktop",
+        "peripheral",
+        tick.now,
+        format!("dt:{}:periph:{name}:{on}:{}", tick.cfg.did, tick.now),
+        // `kind` is always audio here, and saying so is better than leaving a
+        // required field to be inferred from the name.
+        Some(serde_json::json!({ "kind": "audio", "name": name, "on": on })),
+    )
+}
+
+#[cfg(windows)]
+fn playback_devices() -> Vec<String> {
+    crate::backend::win_audio::playback_devices()
+}
+
+#[cfg(not(windows))]
+fn playback_devices() -> Vec<String> {
+    // macOS would use the same Core Audio device list `mac_av` already talks
+    // to; not written yet.
+    Vec::new()
+}
+
 #[cfg(target_os = "macos")]
 fn output_route() -> Option<(&'static str, Option<String>)> {
     crate::backend::mac_av::output_route()
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(windows)]
 fn output_route() -> Option<(&'static str, Option<String>)> {
-    // Windows needs IMMDeviceEnumerator through COM, which is a chunk of work
-    // for one field; Linux needs PulseAudio. Neither is written. `None` means
-    // "not asked", and the handler simply emits nothing -- which is the same
-    // rule every probe follows rather than a zero standing in for a fact.
+    crate::backend::win_audio::output_route()
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn output_route() -> Option<(&'static str, Option<String>)> {
+    // Linux needs PulseAudio, which is its own change. `None` means "not
+    // asked" and the handler emits nothing -- the same rule every probe
+    // follows, rather than a zero standing in for a fact.
     None
 }
 
@@ -135,8 +184,10 @@ fn output_route() -> Option<(&'static str, Option<String>)> {
 /// off left exactly one value different, and the bytes that moved were a
 /// UTF-16 string:
 ///
-///     on  -> Microsoft.QuietHoursProfile.PriorityOnly
-///     off -> Microsoft.QuietHoursProfile.Unrestricted
+/// ```text
+/// on  -> Microsoft.QuietHoursProfile.PriorityOnly
+/// off -> Microsoft.QuietHoursProfile.Unrestricted
+/// ```
 ///
 /// So the blob is searched for the profile id rather than parsed. The
 /// surrounding format is undocumented and changes between builds; a substring

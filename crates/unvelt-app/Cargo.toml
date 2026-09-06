@@ -1,6 +1,6 @@
 [package]
 name = "unvelt-app"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 rust-version = "1.82"
 description = "The unvelt desktop app: a tray icon, a status window, and the collector running behind both."
@@ -21,3 +21,11 @@ tauri = { version = "2", features = ["tray-icon", "image-png"] }
 # second tray icon. Without it, double-clicking the exe leaves two identical
 # icons and no way to tell which one is doing the work.
 tauri-plugin-single-instance = "2"
+# Autostart and updates are both first-party plugins. Hand-rolling either would
+# mean three platform paths each -- a Run key, a LaunchAgent, a .desktop file --
+# and a signature check that has to be right the first time.
+tauri-plugin-autostart = "2"
+tauri-plugin-updater = "2"
+# For the update loop's sleep. Tauri already pulls tokio in; this only asks
+# for the timer.
+tokio = { version = "1", features = ["time"] }

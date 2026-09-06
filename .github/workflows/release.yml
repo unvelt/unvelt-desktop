@@ -91,12 +91,24 @@ jobs:
             client_id:compound-506422/unvelt-oauth-client-id
             client_secret:compound-506422/unvelt-oauth-client-secret
 
+      - id: signing
+        uses: google-github-actions/get-secretmanager-secrets@v2
+        with:
+          secrets: |-
+            updater_key:compound-506422/unvelt-updater-key
+
       - name: Build
         run: cargo tauri build --target ${{ matrix.target }}
         working-directory: crates/unvelt-app
         env:
           UNVELT_BUILD_OAUTH_CLIENT_ID: ${{ steps.oauth.outputs.client_id }}
           UNVELT_BUILD_OAUTH_CLIENT_SECRET: ${{ steps.oauth.outputs.client_secret }}
+          # Signs the updater artifacts. The public half is compiled into the
+          # app, so an update the private key did not sign is refused -- which
+          # is the only thing standing between an auto-updater and a very
+          # convenient way to ship somebody else's code.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ steps.signing.outputs.updater_key }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
 
       # The headless agent ships alongside the app. It is the thing to reach
       # for when the window is the part that is broken, and it is how a
@@ -119,9 +131,13 @@ jobs:
           if-no-files-found: error
           path: |
             target/${{ matrix.target }}/release/bundle/nsis/*.exe
+            target/${{ matrix.target }}/release/bundle/nsis/*.sig
+            target/${{ matrix.target }}/release/bundle/macos/*.tar.gz
+            target/${{ matrix.target }}/release/bundle/macos/*.sig
             target/${{ matrix.target }}/release/bundle/dmg/*.dmg
             target/${{ matrix.target }}/release/bundle/deb/*.deb
             target/${{ matrix.target }}/release/bundle/appimage/*.AppImage
+            target/${{ matrix.target }}/release/bundle/appimage/*.sig
 
       # Renamed per target before upload. The release flattens every path to
       # its basename, so the macOS and Linux agents -- both plain
@@ -156,6 +172,47 @@ jobs:
         with: { path: dist }
       # The tap's cask verifies this. A cask with a stale or absent checksum
       # is a cask that installs whatever it is handed.
+      # The manifest the installed app polls. Generated from the signatures
+      # the build actually produced -- a hand-written one would drift from the
+      # artifacts the moment a platform's bundle name changed, and the failure
+      # would be silent: the updater would simply never find an update.
+      - name: Build latest.json
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib
+          tag = os.environ["GITHUB_REF_NAME"]
+          version = tag.lstrip("v")
+          base = ("https://github.com/unvelt/unvelt-desktop/releases/download/%s/" % tag)
+          # Tauri asks for a platform key it chooses, not one we invent.
+          want = {
+              "windows-x86_64": (".exe", "nsis"),
+              "darwin-aarch64": (".tar.gz", "macos"),
+              "linux-x86_64": (".AppImage", "appimage"),
+          }
+          files = list(pathlib.Path("dist").rglob("*"))
+          platforms = {}
+          for key, (suffix, _kind) in want.items():
+              sig = next((f for f in files if f.name.endswith(suffix + ".sig")), None)
+              art = next((f for f in files if f.name.endswith(suffix)), None)
+              if not sig or not art:
+                  print("no artifact for", key)
+                  continue
+              platforms[key] = {
+                  "signature": sig.read_text().strip(),
+                  "url": base + art.name,
+              }
+          if not platforms:
+              raise SystemExit("latest.json would list no platforms; refusing to publish it")
+          out = {
+              "version": version,
+              "notes": "See the release notes.",
+              "pub_date": __import__("datetime").datetime.utcnow().isoformat() + "Z",
+              "platforms": platforms,
+          }
+          pathlib.Path("dist/latest.json").write_text(json.dumps(out, indent=2))
+          print(json.dumps(out, indent=2))
+          PY
+
       # `-not -name SHA256SUMS` because the first run hashed the file it was
       # in the middle of writing and recorded the checksum of an empty one.
       - name: Checksums

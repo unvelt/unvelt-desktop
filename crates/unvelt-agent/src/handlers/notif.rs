@@ -31,6 +31,7 @@
 use std::path::PathBuf;
 
 use super::{Handler, Tick};
+use crate::allowlist::Allowlist;
 use crate::config::Config;
 use crate::envelope::Event;
 
@@ -55,6 +56,9 @@ pub struct NotifHandler {
     /// has no such database (a Windows build without Action Centre, or a
     /// locked-down profile) is not retried noisily forever.
     unavailable: bool,
+    /// Apps whose notification CONTENT this machine may keep. Empty unless
+    /// somebody named one.
+    allow: Allowlist,
 }
 
 impl NotifHandler {
@@ -79,6 +83,7 @@ impl NotifHandler {
             cursor_path,
             cursor,
             unavailable: false,
+            allow: Allowlist::load(),
         }
     }
 
@@ -130,6 +135,11 @@ impl Handler for NotifHandler {
         let mut out = Vec::new();
         for r in rows {
             self.cursor = self.cursor.max(r.id);
+            // Remember the app so it can be offered in the content picker.
+            // Records the id only, never anything about the notification, and
+            // grants nothing by itself -- an app has to be chosen by hand
+            // before any content is read for it.
+            self.allow.note_seen(&r.app);
             out.push(tick.event(
                 "notif",
                 "posted",
@@ -137,15 +147,32 @@ impl Handler for NotifHandler {
                 // Keyed on the store's own row id, so a re-read after a crash
                 // collides with the original instead of duplicating it.
                 format!("nt:{}:{}", tick.cfg.did, r.id),
-                Some(serde_json::json!({
-                    "pkg": r.app,
+                {
+                    let mut p = serde_json::Map::new();
+                    p.insert("pkg".into(), serde_json::json!(r.app));
                     // Windows toasts have no equivalent of FLAG_ONGOING_EVENT,
                     // and filtering to `toast` has already excluded the badge
                     // and tile updates that would map to it. Sent explicitly
                     // as 0 rather than omitted, because the field is required
                     // and the digest counts on `ongoing = 0`.
-                    "ongoing": 0,
-                })),
+                    p.insert("ongoing".into(), serde_json::json!(0));
+                    // A SECOND query, for this row only, and only when this
+                    // app is on the list. Not a wider version of the first
+                    // one: the query that fetches every notification still
+                    // cannot return content, so a mistake here can leak one
+                    // named app's text and never the whole store.
+                    if self.allow.allows(&r.app) {
+                        if let Some((title, text)) = read_content(&self.db, r.id) {
+                            if !title.is_empty() {
+                                p.insert("title".into(), serde_json::json!(title));
+                            }
+                            if !text.is_empty() {
+                                p.insert("text".into(), serde_json::json!(text));
+                            }
+                        }
+                    }
+                    Some(serde_json::Value::Object(p))
+                },
             ));
         }
         if !out.is_empty() {
@@ -218,6 +245,89 @@ fn read_since(_db: &std::path::Path, _cursor: i64) -> Result<Vec<Posted>, String
     Err("the notification store is Windows-only".into())
 }
 
+/// The title and body of ONE notification, for an app on the allowlist.
+///
+/// Deliberately a separate function with its own query and its own row filter.
+/// The main read cannot return content at all; this one can, for a single
+/// `rec_id` that has already been checked against the list. Keeping them apart
+/// means the blast radius of a mistake here is one named app rather than every
+/// notification on the machine.
+///
+/// The payload is toast XML. Only the text nodes are taken -- never the
+/// attributes, which carry launch arguments and app-defined data that can
+/// contain tokens.
+#[cfg(windows)]
+fn read_content(db: &std::path::Path, id: i64) -> Option<(String, String)> {
+    use rusqlite::Connection;
+
+    let tmp = std::env::temp_dir().join(format!("unvelt-wpnc-{}.db", std::process::id()));
+    for suffix in ["", "-wal", "-shm"] {
+        let from = PathBuf::from(format!("{}{}", db.display(), suffix));
+        let to = PathBuf::from(format!("{}{}", tmp.display(), suffix));
+        if from.exists() {
+            std::fs::copy(&from, &to).ok()?;
+        }
+    }
+    let out = (|| -> Option<(String, String)> {
+        let conn = Connection::open(&tmp).ok()?;
+        let xml: String = conn
+            .query_row(
+                "SELECT CAST(Payload AS TEXT) FROM Notification WHERE Id = ?1",
+                [id],
+                |r| r.get(0),
+            )
+            .ok()?;
+        Some(toast_text(&xml))
+    })();
+    for suffix in ["", "-wal", "-shm"] {
+        let _ = std::fs::remove_file(PathBuf::from(format!("{}{}", tmp.display(), suffix)));
+    }
+    out
+}
+
+#[cfg(not(windows))]
+fn read_content(_db: &std::path::Path, _id: i64) -> Option<(String, String)> {
+    None
+}
+
+/// The `<text>` nodes of a toast, in order: first is the title, the rest are
+/// the body.
+///
+/// A deliberately small parser rather than an XML crate. It reads only text
+/// between `<text...>` and `</text>`, so attributes -- which hold launch
+/// arguments, image URIs and app-defined payloads -- cannot be captured even
+/// by accident.
+pub fn toast_text(xml: &str) -> (String, String) {
+    let mut parts = Vec::new();
+    let mut rest = xml;
+    while let Some(open) = rest.find("<text") {
+        rest = &rest[open + 5..];
+        let Some(gt) = rest.find('>') else { break };
+        rest = &rest[gt + 1..];
+        let Some(close) = rest.find("</text>") else {
+            break;
+        };
+        let body = unescape(&rest[..close]);
+        if !body.trim().is_empty() {
+            parts.push(body.trim().to_string());
+        }
+        rest = &rest[close + 7..];
+    }
+    if parts.is_empty() {
+        return (String::new(), String::new());
+    }
+    let title = parts.remove(0);
+    (title, parts.join(" "))
+}
+
+fn unescape(s: &str) -> String {
+    s.replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&amp;", "&")
+}
+
 /// Windows FILETIME (100ns ticks since 1601) to Unix milliseconds.
 #[cfg_attr(not(windows), allow(dead_code))]
 pub fn filetime_to_unix_ms(ft: i64) -> i64 {
@@ -226,6 +336,7 @@ pub fn filetime_to_unix_ms(ft: i64) -> i64 {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
 
     #[test]
@@ -244,10 +355,52 @@ mod tests {
     }
 
     #[test]
+    fn toast_parsing_takes_text_and_never_attributes() {
+        // Attributes are where launch arguments, image URIs and app-defined
+        // payloads live. A parser that grabbed them would capture tokens
+        // nobody meant to share, from apps somebody DID consent to.
+        let xml = r#"<toast launch="action=open&amp;id=SECRET-TOKEN-42">
+            <visual><binding template="ToastGeneric">
+              <text id="1">Meeting at 3</text>
+              <text id="2">with Priya &amp; Sam</text>
+              <image src="https://example.invalid/PRIVATE.png"/>
+            </binding></visual></toast>"#;
+        let (title, body) = toast_text(xml);
+        assert_eq!(title, "Meeting at 3");
+        assert_eq!(body, "with Priya & Sam");
+        let all = format!("{title}{body}");
+        for leaked in [
+            "SECRET-TOKEN-42",
+            "PRIVATE.png",
+            "ToastGeneric",
+            "action=open",
+        ] {
+            assert!(
+                !all.contains(leaked),
+                "attribute leaked into content: {leaked}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_toast_with_no_text_yields_nothing_rather_than_junk() {
+        assert_eq!(
+            toast_text("<toast><visual/></toast>"),
+            (String::new(), String::new())
+        );
+        assert_eq!(toast_text(""), (String::new(), String::new()));
+    }
+
+    #[test]
     fn the_query_can_never_return_notification_content() {
         // The guarantee this whole module rests on, asserted rather than
         // trusted to review: if someone widens the SELECT to include the toast
         // payload, this fails before it ships.
+        // Guards the SWEEP -- the query that reads every new notification.
+        // A second, separate query does fetch content, but only for one row
+        // whose app is already on the allowlist. Keeping them apart is what
+        // bounds a mistake to one named app instead of the whole store, and
+        // this test is what keeps them apart.
         let src = include_str!("notif.rs");
         let sql_start = src
             .find("\"SELECT n.Id")
@@ -256,7 +409,7 @@ mod tests {
         for forbidden in ["Payload", "payload"] {
             assert!(
                 !sql.contains(forbidden),
-                "the notification query names {forbidden}"
+                "the sweep query names {forbidden}"
             );
         }
     }

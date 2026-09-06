@@ -1,1 +1,1 @@
-{}
+{"default":{"identifier":"default","description":"What the status window is allowed to do.","local":true,"windows":["status"],"permissions":["core:default","autostart:default","updater:default"]}}

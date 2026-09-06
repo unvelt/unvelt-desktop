@@ -157,13 +157,7 @@ pub const CATALOGUE: &[(&str, &str, &str, &str, bool)] = &[
 /// screen that lists only today's five signals lets someone agree to unvelt
 /// without knowing what unvelt is going to become. Saying "not yet" is how
 /// the screen stays true in both directions.
-pub const PLANNED: &[(&str, &str, &str)] = &[(
-    "Notification content",
-    "What an interruption was actually about, for the handful of apps \
-         where that matters to you.",
-    "The title and body of notifications, and only from apps you add one \
-         at a time. The list starts empty and nothing is added to it for you.",
-)];
+pub const PLANNED: &[(&str, &str, &str)] = &[];
 
 #[derive(Clone)]
 pub struct Toggles {

@@ -180,6 +180,9 @@ pub use windows::WindowsBackend;
 #[cfg(target_os = "macos")]
 pub mod mac_av;
 
+#[cfg(windows)]
+pub mod win_audio;
+
 #[cfg(unix)]
 mod unix;
 #[cfg(unix)]

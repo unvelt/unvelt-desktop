@@ -1,6 +1,6 @@
 [package]
 name = "unvelt-agent"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 rust-version = "1.82"
 description = "The unvelt desktop collector: a headless agent that turns OS signals into events."
@@ -28,7 +28,20 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 # windows-sys covers Win32, but SMTC is WinRT and only the `windows` crate
 # projects it. The two coexist; this one is scoped to the media namespace so
 # it does not pull in the whole surface.
-windows = { version = "0.58", features = ["Media_Control", "Foundation"] }
+windows = { version = "0.58", features = [
+    "Media_Control",
+    "Foundation",
+    # The audio endpoints, for the output route and the peripheral signal.
+    # windows-sys cannot project COM interfaces; this crate can.
+    "Win32_Media_Audio",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_Devices_FunctionDiscovery",
+    # IPropertyStore and PROPERTYKEY live here, and IMMDevice::OpenPropertyStore
+    # is gated behind them.
+    "Win32_UI_Shell_PropertiesSystem",
+    "Win32_Foundation",
+] }
 # windows-sys rather than the `windows` crate: this is a direct port of ctypes
 # calls, so raw FFI signatures are the closer match and the smaller dependency.
 windows-sys = { version = "0.59", features = [

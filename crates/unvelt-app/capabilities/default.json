@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "What the status window is allowed to do.",
+  "windows": ["status"],
+  "permissions": [
+    "core:default",
+    "autostart:default",
+    "updater:default"
+  ]
+}
