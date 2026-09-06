@@ -100,6 +100,29 @@ Windows was never affected: it has always sent the executable base name, which
 is already platform-native, so five thousand existing events keep their
 `dim_key` and nothing in the history forks.
 
+## Installing
+
+macOS, through our own tap:
+
+```sh
+brew tap unvelt/tap
+brew install --cask unvelt
+```
+
+The tap exists because Homebrew's official cask repo stopped accepting
+unsigned casks on 1 September 2026, and unvelt is unsigned. Third-party taps
+are unaffected. The cask clears the `com.apple.quarantine` flag in postflight
+and says so in its caveats — Gatekeeper refuses an unsigned app that carries
+it, and Sequoia removed the Control-click bypass, so without that the install
+ends at a dialog with no way past it.
+
+Windows and Linux: the artifacts on the release page. Windows shows a
+SmartScreen warning on first run, which is what an unsigned installer costs.
+
+`.github/workflows/release.yml` builds all four targets on a tag. macOS is
+built there and nowhere else — the development machine is Windows, and a
+`.app` needs a Mac.
+
 ## Platform status
 
 | | Windows | macOS | Linux |
@@ -108,6 +131,14 @@ is already platform-native, so five thousand existing events keep their
 | probes | native Win32 | subprocess | subprocess, X11 |
 | lock/unlock | yes | — | — |
 | fullscreen | yes | — | — |
+| notifications | yes (`wpndatabase.db`) | planned (`usernoted`) | — |
+| media | yes (SMTC) | planned (3 layers) | planned (MPRIS2) |
+
+Notifications and media are **off until you turn them on**. On Android both sit
+behind an OS permission granted by hand; on Windows they sit behind nothing —
+the notification store is a readable file and SMTC answers any process that
+asks. When the platform declines to put the question, the app's own switch is
+the only place it gets put.
 
 macOS and Linux keep the subprocess probes the Python collector uses. Replacing
 those with native frameworks is a change in behaviour as well as in language,

@@ -1,0 +1,104 @@
+name: release
+
+# Builds the installable thing for each platform and attaches it to a tag.
+#
+# This exists because macOS cannot be built anywhere else here: the only
+# development machine is Windows, and a .app bundle needs a Mac. Every macOS
+# artifact unvelt ships comes out of this workflow.
+#
+# UNSIGNED, ON PURPOSE, FOR NOW
+#
+# No Apple Developer certificate ($99/yr) and no Azure Trusted Signing
+# ($120/yr) -- see docs/desktop-plan.md §5. The costs of that are real and
+# named rather than hidden: Windows shows a SmartScreen warning on first run,
+# and macOS keeps a quarantine flag that Gatekeeper refuses. The Homebrew cask
+# strips that flag in postflight, which is why the tap exists and why a plain
+# .dmg download is the worse route.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          # Both Mac architectures, separately. A universal binary would be
+          # one download, but Tauri's universal target doubles build time and
+          # every Mac since 2020 is arm64; an Intel user gets their own file
+          # rather than everyone paying for one.
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: macos-13
+            target: x86_64-apple-darwin
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Linux system libraries
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev \
+            librsvg2-dev patchelf libxdo-dev
+
+      - name: Tauri CLI
+        run: cargo install tauri-cli --version "^2" --locked
+
+      - name: Build
+        run: cargo tauri build --target ${{ matrix.target }}
+        working-directory: crates/unvelt-app
+
+      # The headless agent ships alongside the app. It is the thing to reach
+      # for when the window is the part that is broken, and it is how a
+      # machine with no desktop session collects at all.
+      - name: Build the CLI
+        run: cargo build --release --target ${{ matrix.target }} -p unvelt-agent
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: unvelt-${{ matrix.target }}
+          if-no-files-found: error
+          path: |
+            target/${{ matrix.target }}/release/bundle/nsis/*.exe
+            target/${{ matrix.target }}/release/bundle/dmg/*.dmg
+            target/${{ matrix.target }}/release/bundle/deb/*.deb
+            target/${{ matrix.target }}/release/bundle/appimage/*.AppImage
+            target/${{ matrix.target }}/release/unvelt-agent
+            target/${{ matrix.target }}/release/unvelt-agent.exe
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: dist }
+      # The tap's cask verifies this. A cask with a stale or absent checksum
+      # is a cask that installs whatever it is handed.
+      - name: Checksums
+        run: |
+          find dist -type f | sort | xargs shasum -a 256 | tee dist/SHA256SUMS
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/**/*
+          fail_on_unmatched_files: true
+          body: |
+            Unsigned builds. See the README for what that costs on each
+            platform, and prefer `brew install --cask unvelt/tap/unvelt` on
+            macOS — the cask clears the quarantine flag that Gatekeeper
+            otherwise refuses.
