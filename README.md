@@ -23,9 +23,33 @@ crates/unvelt-agent/     the agent — the whole of step 2
 ```sh
 cargo run -- --probe        # every OS probe once: what does this machine allow?
 cargo run -- --once         # one full cycle, spooled, then exit
-cargo test                  # 20 tests, no network, no database
+cargo test                  # 52 tests, no network, no database
 UNVELT_UID=<subject> cargo run
 ```
+
+### Linting the other platforms without leaving this one
+
+Three of the four CI failures in this repo's history were lints or tests that
+only fire off Windows, each costing a push and a five-minute round trip. They
+are reproducible locally: `cargo clippy` never links, so the only thing a
+foreign target needs is a C compiler for the dependencies' build scripts, and
+zig is one.
+
+```sh
+pip install ziglang
+# a shim, because the `cc` crate insists on passing the Rust triple, which
+# zig does not accept -- strip --target and supply zig's own
+printf '@echo off
+python -m ziglang cc -target x86_64-linux-gnu %%*
+' > zcc.bat
+
+CC_x86_64_unknown_linux_gnu=./zcc.bat   cargo clippy -p unvelt-agent --all-targets     --target x86_64-unknown-linux-gnu -- -D warnings
+```
+
+`cargo test --target x86_64-unknown-linux-gnu --no-run` compiles the Linux
+test binaries too, which catches everything except an assertion that only
+fails at runtime. macOS cannot be reproduced this way -- it needs Apple's SDK
+-- so that one still goes through CI.
 
 `--probe` is the first thing to run on a new machine. It answers "which of
 these can this OS actually see" one line at a time, which is the question the
@@ -137,14 +161,31 @@ built there and nowhere else — the development machine is Windows, and a
 | camera | yes, names the app | yes, **cannot** name the app | — |
 | microphone | yes, names the app | yes, names the app | — |
 | focus mode (DND) | yes, once the setting has been touched | yes | — |
-| audio output route | — | yes | — |
+| audio output route | yes (`IMMDeviceEnumerator`) | yes | — |
+| audio peripherals | yes (endpoint list) | — | — |
+| starts at login | yes | yes | yes |
 | sleep / wake | yes | yes | yes |
 
 **The one asymmetry to know before reading the data.** On Windows, SMTC reports
 browser playback with the track, artist and album. On macOS nothing does:
 browsers publish no now-playing to AppleScript, so a Mac gets `desktop.playing`
-— *this app was making sound, for this long* — and no track. That gap is real,
-and only the opt-in `mediaremote-adapter` route closes it. It is not built.
+— *this app was making sound, for this long* — and no track.
+
+**That gap does not close.** MediaRemote.framework is the only API that ever
+reported system now-playing, and it is gated. Measured on macOS 15.6 (24G84,
+arm64) with Chrome playing, by `tools/probe_mac_nowplaying.sh`:
+
+| | `GetNowPlayingInfo` | `IsPlaying` | `GetNowPlayingClient` |
+|---|---|---|---|
+| unsigned | `(null)` | no | no client |
+| ad-hoc signed | `(null)` | no | no client |
+| ad-hoc + entitlement | SIGKILL at exec | SIGKILL | SIGKILL |
+
+All five symbols resolve, so the framework has not moved — the calls succeed
+and answer nothing. Claiming `com.apple.mediaremote.send-playback-commands` on
+an ad-hoc signature gets the process killed by the kernel before `main`: that
+entitlement is Apple's to grant. Re-run the probe on any Mac; it installs
+nothing.
 
 `desktop.playing` is deliberately **not** `media.play`. Audible is broader than
 media: a ding, a call and a game all make sound, and folding them into
