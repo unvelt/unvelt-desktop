@@ -125,9 +125,65 @@ fn output_route() -> Option<(&'static str, Option<String>)> {
 /// person asked for one and a quiet hour because a game was fullscreen are
 /// different facts about the day, and `mode` keeps them apart instead of
 /// flattening both into "silenced".
+/// Windows 11's Do Not Disturb, from the quiet-hours profile it actually sets.
+///
+/// Found by measurement, not by reading docs. Two earlier attempts were wrong:
+/// a registry DWORD that does not exist on this machine at all, and
+/// `SHQueryUserNotificationState`, which kept reporting ACCEPTS_NOTIFICATIONS
+/// with the toggle on -- `QUNS_QUIET_TIME` predates Focus and does not track
+/// it. Snapshotting the CloudStore keys with the toggle on and again with it
+/// off left exactly one value different, and the bytes that moved were a
+/// UTF-16 string:
+///
+///     on  -> Microsoft.QuietHoursProfile.PriorityOnly
+///     off -> Microsoft.QuietHoursProfile.Unrestricted
+///
+/// So the blob is searched for the profile id rather than parsed. The
+/// surrounding format is undocumented and changes between builds; a substring
+/// search survives that, where an offset would not. If Microsoft renames the
+/// profiles this returns `None` and the signal goes quiet, which is the right
+/// failure -- better than a confident wrong answer about whether somebody
+/// asked to be left alone.
+#[cfg(windows)]
+fn quiet_hours_profile() -> Option<&'static str> {
+    // A raw string, so the backslashes are path separators rather than escapes.
+    const STORE: &str = concat!(
+        r"SOFTWARE\Microsoft\Windows\CurrentVersion\CloudStore\Store\DefaultAccount\Current\",
+        r"{214d800f-eb24-4181-9218-225be930b3ac}$windows.data.donotdisturb.quiethourssettings\",
+        r"windows.data.donotdisturb.quiethourssettings",
+    );
+    let blob = crate::backend::reg_binary(STORE, "Data")?;
+    // The string is not aligned to any fixed offset, so match on the encoded
+    // bytes wherever they land.
+    let find = |needle: &str| {
+        let want: Vec<u8> = needle.encode_utf16().flat_map(u16::to_le_bytes).collect();
+        blob.windows(want.len()).any(|w| w == want)
+    };
+    if find("PriorityOnly") {
+        Some("priority_only")
+    } else if find("AlarmsOnly") {
+        Some("alarms_only")
+    } else if find("Unrestricted") {
+        Some("off")
+    } else {
+        None
+    }
+}
+
 #[cfg(windows)]
 fn dnd_state() -> Option<(bool, &'static str)> {
     use windows_sys::Win32::UI::Shell::SHQueryUserNotificationState;
+
+    // The profile is what the PERSON chose, and it answers the question this
+    // signal exists for. Checked first, because the API below cannot see it.
+    match quiet_hours_profile() {
+        Some("priority_only") => return Some((true, "priority_only")),
+        Some("alarms_only") => return Some((true, "alarms_only")),
+        // "off" falls through: the person is not suppressing anything, but the
+        // system might still be, and that is worth knowing separately.
+        _ => {}
+    }
+
     let mut state = 0i32;
     let hr = unsafe { SHQueryUserNotificationState(&mut state) };
     if hr < 0 {

@@ -127,6 +127,51 @@ pub fn run(prog: &str, args: &[&str]) -> String {
     }
 }
 
+/// The raw bytes of one REG_BINARY value under HKEY_CURRENT_USER.
+///
+/// Only `ambient` needs this, for the one Windows fact that has no API.
+#[cfg(windows)]
+pub fn reg_binary(path: &str, name: &str) -> Option<Vec<u8>> {
+    use windows_sys::Win32::Foundation::ERROR_SUCCESS;
+    use windows_sys::Win32::System::Registry::{
+        RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY, HKEY_CURRENT_USER, KEY_READ,
+    };
+    let wide = |s: &str| -> Vec<u16> { s.encode_utf16().chain(std::iter::once(0)).collect() };
+    unsafe {
+        let mut h: HKEY = std::ptr::null_mut();
+        if RegOpenKeyExW(HKEY_CURRENT_USER, wide(path).as_ptr(), 0, KEY_READ, &mut h)
+            != ERROR_SUCCESS
+        {
+            return None;
+        }
+        let key = wide(name);
+        let mut size = 0u32;
+        let mut st = RegQueryValueExW(
+            h,
+            key.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            &mut size,
+        );
+        if st != ERROR_SUCCESS || size == 0 {
+            RegCloseKey(h);
+            return None;
+        }
+        let mut buf = vec![0u8; size as usize];
+        st = RegQueryValueExW(
+            h,
+            key.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null_mut(),
+            buf.as_mut_ptr(),
+            &mut size,
+        );
+        RegCloseKey(h);
+        (st == ERROR_SUCCESS).then_some(buf)
+    }
+}
+
 #[cfg(windows)]
 mod windows;
 #[cfg(windows)]
