@@ -297,6 +297,10 @@ fn read_content(_db: &std::path::Path, _id: i64) -> Option<(String, String)> {
 /// between `<text...>` and `</text>`, so attributes -- which hold launch
 /// arguments, image URIs and app-defined payloads -- cannot be captured even
 /// by accident.
+/// Compiled everywhere, called only on Windows. It stays compiled on the other
+/// platforms because its tests are the guarantee that attributes never leak,
+/// and a guarantee that only runs on one CI runner is a weaker one.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub fn toast_text(xml: &str) -> (String, String) {
     let mut parts = Vec::new();
     let mut rest = xml;
@@ -320,6 +324,7 @@ pub fn toast_text(xml: &str) -> (String, String) {
     (title, parts.join(" "))
 }
 
+#[cfg_attr(not(windows), allow(dead_code))]
 fn unescape(s: &str) -> String {
     s.replace("&lt;", "<")
         .replace("&gt;", ">")
