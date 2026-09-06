@@ -237,7 +237,7 @@ impl Backend for UnixBackend {
                 && !low.contains("not a wi-fi")
                 && !low.contains("not a wifi")
             {
-                let name = out.splitn(2, ':').nth(1).unwrap_or("").trim();
+                let name = out.split_once(':').map(|x| x.1).unwrap_or("").trim();
                 if usable_ssid(name) {
                     return Some(name.to_string());
                 }

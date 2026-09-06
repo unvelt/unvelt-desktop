@@ -35,6 +35,13 @@ use crate::config::Config;
 use crate::envelope::Event;
 
 /// Windows FILETIME epoch (1601-01-01) to Unix epoch, in 100-nanosecond ticks.
+///
+/// Only the Windows store reader consults these, so on macOS and Linux they
+/// are genuinely dead rather than merely unused today. Kept compiled
+/// everywhere anyway: the conversion has published test vectors, and running
+/// that test on three platforms is worth more than deleting six lines from
+/// two of them.
+#[cfg_attr(not(windows), allow(dead_code))]
 const FILETIME_TO_UNIX: i64 = 116_444_736_000_000_000;
 
 pub struct NotifHandler {
@@ -212,6 +219,7 @@ fn read_since(_db: &std::path::Path, _cursor: i64) -> Result<Vec<Posted>, String
 }
 
 /// Windows FILETIME (100ns ticks since 1601) to Unix milliseconds.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub fn filetime_to_unix_ms(ft: i64) -> i64 {
     (ft - FILETIME_TO_UNIX) / 10_000
 }
