@@ -18,25 +18,46 @@ use crate::config::Config;
 pub struct ApiClient {
     url: String,
     key: String,
-    /// `None` when nobody has signed in on this machine. The requests still go
-    /// out: the legacy VM gates on `key`, and a 401 from the new ingest is the
-    /// clearest possible signal that `--login` has not been run, far better
-    /// than an agent that silently collects into a spool nothing will drain.
-    session: Option<std::cell::RefCell<Session>>,
+    /// `None` until somebody signs in, and re-checked on every request until
+    /// they do.
+    ///
+    /// It used to be loaded once, at construction, and that was wrong in the
+    /// one case that matters: a fresh install has no session yet, so the
+    /// client cached `None` and kept it after the person signed in. The window
+    /// re-read the session on every poll and said "signed in" while every
+    /// upload went out unauthenticated and came back 401 -- the UI right, the
+    /// uploader wrong, which is worse than both being wrong.
+    session: std::cell::RefCell<Option<Session>>,
+    /// Kept so the session can be re-read later. Cheap: a handful of strings.
+    cfg: Config,
     agent: ureq::Agent,
     debug: bool,
 }
 
 impl ApiClient {
     pub fn signed_in(&self) -> bool {
-        self.session.is_some()
+        self.bearer().is_some()
+    }
+
+    /// A bearer token, loading the session if one has appeared since startup.
+    ///
+    /// The reload only happens while signed out, so the steady state is one
+    /// `Option` check per request and the file is not re-read on a machine
+    /// that already has a session.
+    fn bearer(&self) -> Option<String> {
+        let mut slot = self.session.borrow_mut();
+        if slot.is_none() {
+            *slot = Session::load(&self.cfg);
+        }
+        slot.as_mut().and_then(|s| s.id_token())
     }
 
     pub fn new(cfg: &Config) -> Self {
         ApiClient {
             url: cfg.url.clone(),
             key: cfg.key.clone(),
-            session: Session::load(cfg).map(std::cell::RefCell::new),
+            session: std::cell::RefCell::new(Session::load(cfg)),
+            cfg: cfg.clone(),
             agent: ureq::AgentBuilder::new()
                 .timeout_connect(Duration::from_secs(10))
                 .timeout(Duration::from_secs(20))
@@ -56,12 +77,10 @@ impl ApiClient {
         if !self.key.is_empty() {
             req = req.set("X-Compound-Key", &self.key);
         }
-        if let Some(s) = &self.session {
-            if let Some(tok) = s.borrow_mut().id_token() {
-                req = req.set("Authorization", &format!("Bearer {tok}"));
-            } else if self.debug {
-                eprintln!("unvelt: could not refresh the ID token; sending unauthenticated");
-            }
+        if let Some(tok) = self.bearer() {
+            req = req.set("Authorization", &format!("Bearer {tok}"));
+        } else if self.debug {
+            eprintln!("unvelt: no session yet; sending unauthenticated");
         }
         match req.send_bytes(&body) {
             Ok(r) => (200..300).contains(&r.status()),
@@ -147,6 +166,42 @@ fn crc32(data: &[u8]) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_session_created_after_startup_is_picked_up() {
+        // The Mac bug, pinned. The client is built before anyone has signed
+        // in -- which is what happens on every fresh install -- and must
+        // notice the session that appears when they do, without a restart.
+        // Caching the absence made the window say "signed in" while every
+        // upload went out unauthenticated.
+        let mut cfg = Config::for_test();
+        cfg.spool_dir = std::env::temp_dir()
+            .join(format!("unvelt-sess-{}", crate::now_ms()))
+            .join("spool");
+        std::fs::create_dir_all(&cfg.spool_dir).unwrap();
+
+        let client = ApiClient::new(&cfg);
+        assert!(!client.signed_in(), "no session should exist yet");
+
+        // Sign in happens elsewhere, in another thread, after this client was
+        // constructed. All it leaves behind is the stored refresh token.
+        crate::auth::write_secret_for_test(&crate::auth::token_path(&cfg), "not-a-real-token");
+
+        // `signed_in` must now find it. It cannot mint a real ID token from a
+        // fake refresh token, so this asserts the RELOAD happened rather than
+        // the network call succeeding.
+        assert!(
+            client.session.borrow().is_none(),
+            "precondition: still cached as absent"
+        );
+        let _ = client.signed_in();
+        assert!(
+            client.session.borrow().is_some(),
+            "the session written after startup was never re-read"
+        );
+
+        let _ = std::fs::remove_dir_all(cfg.spool_dir.parent().unwrap());
+    }
 
     #[test]
     fn crc32_matches_the_known_check_value() {

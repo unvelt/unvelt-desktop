@@ -490,6 +490,13 @@ fn read_secret(path: &std::path::Path) -> Option<String> {
 
 // ------------------------------------------------------------------ crypto
 
+/// Storage is private, but the client's tests need to plant a session the way
+/// a real sign-in would. Test-only so the door does not exist in a release.
+#[cfg(test)]
+pub fn write_secret_for_test(path: &std::path::Path, value: &str) {
+    write_secret(path, value).expect("could not write test session");
+}
+
 fn random_token() -> String {
     // 32 bytes of OS randomness, base64url. Not `rand`: one call to the
     // platform's own generator is the whole requirement.
