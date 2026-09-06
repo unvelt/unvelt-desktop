@@ -42,6 +42,10 @@ pub struct Source {
     pub gives: &'static str,
     pub costs: &'static str,
     pub enabled: bool,
+    /// False when this platform has no reader for it. The window shows these
+    /// without a switch, because offering one would be offering a decision
+    /// that changes nothing.
+    pub available: bool,
 }
 
 /// Keyed by handler name, so the controller can gate on it directly.
@@ -150,6 +154,27 @@ pub const CATALOGUE: &[(&str, &str, &str, &str, bool)] = &[
     ),
 ];
 
+/// Switches this build has no reader behind on this platform.
+///
+/// A switch with no handler is a lie on a consent screen: it invites somebody
+/// to agree to something that then does not happen, and the absence shows up
+/// later as a gap nobody can explain. So the platforms that cannot read a
+/// signal say so, and the window shows it as unavailable rather than as an
+/// ordinary toggle.
+///
+/// Linux is the honest casualty. `notif` has no handler at all -- there is no
+/// cross-desktop notification store to read -- and `capture`, `media` and
+/// `ambient` are built but every probe behind them returns "not asked": no
+/// PulseAudio route, no D-Bus MPRIS reader, no camera or microphone source.
+/// The .deb and the AppImage therefore collect apps, input intensity,
+/// lock/unlock, network and battery, and say plainly that they collect
+/// nothing else.
+#[cfg(any(windows, target_os = "macos"))]
+pub const UNAVAILABLE: &[&str] = &[];
+
+#[cfg(all(unix, not(target_os = "macos")))]
+pub const UNAVAILABLE: &[&str] = &["notif", "capture", "media", "ambient"];
+
 /// Signals unvelt will collect but cannot yet.
 ///
 /// Shown on the consent screen with no switch. Two reasons, and the second is
@@ -241,12 +266,19 @@ impl Toggles {
     pub fn list(&self) -> Vec<Source> {
         CATALOGUE
             .iter()
-            .map(|(id, label, gives, costs, _)| Source {
-                id,
-                label,
-                gives,
-                costs,
-                enabled: self.is_enabled(id),
+            .map(|(id, label, gives, costs, _)| {
+                let available = !UNAVAILABLE.contains(id);
+                Source {
+                    id,
+                    label,
+                    gives,
+                    costs,
+                    // Never reported as on where nothing can read it, whatever
+                    // the saved answer says. The answer is kept -- moving the
+                    // same account to a Mac must not silently drop it.
+                    enabled: available && self.is_enabled(id),
+                    available,
+                }
             })
             .collect()
     }
@@ -311,6 +343,26 @@ mod tests {
     }
 
     #[test]
+    fn an_unavailable_source_never_reports_itself_as_on() {
+        // The saved answer is kept -- the same account on a Mac must not find
+        // its notifications switched off because it was once opened on Linux
+        // -- but a platform that cannot read the signal must not claim to be
+        // collecting it.
+        let t = Toggles {
+            disabled: Arc::new(Mutex::new(BTreeSet::new())),
+            enabled: Arc::new(Mutex::new(
+                UNAVAILABLE.iter().map(|s| s.to_string()).collect(),
+            )),
+            path: std::env::temp_dir().join("unvelt-avail-test.json"),
+        };
+        for s in t.list() {
+            if !s.available {
+                assert!(!s.enabled, "{} is unavailable but reports enabled", s.id);
+            }
+        }
+    }
+
+    #[test]
     fn an_explicit_yes_outlives_a_change_of_default() {
         // Saved as an answer, not as an absence: turning notifications on and
         // then shipping a release that still defaults them off must not
@@ -335,6 +387,24 @@ mod tests {
             .map(|h| h.name())
             .collect();
         let listed: BTreeSet<&str> = CATALOGUE.iter().map(|(id, ..)| *id).collect();
-        assert_eq!(names, listed);
+
+        // One direction is absolute on every platform: a handler with no
+        // switch is a signal nobody can turn off.
+        let unswitched: Vec<&&str> = names.difference(&listed).collect();
+        assert!(
+            unswitched.is_empty(),
+            "handlers with no switch: {unswitched:?}"
+        );
+
+        // The other cannot be, because a platform may have no reader. What is
+        // required is that every such switch is DECLARED unavailable, so the
+        // window can stop offering it -- the drift this catches is a handler
+        // being dropped on one OS while its switch keeps promising it.
+        for id in listed.difference(&names) {
+            assert!(
+                UNAVAILABLE.contains(id),
+                "{id} has no handler on this platform and is not in UNAVAILABLE"
+            );
+        }
     }
 }

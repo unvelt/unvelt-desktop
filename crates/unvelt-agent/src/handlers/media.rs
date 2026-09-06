@@ -210,6 +210,33 @@ fn current() -> Result<Option<Now>, String> {
 /// about which tab is audible -- and that gap is why `desktop.playing` exists.
 /// A third layer (`mediaremote-adapter`) is the only route to browser TRACK
 /// metadata on macOS and is not built; see docs/desktop-plan.md.
+/// Spotify and Music, through their scripting dictionaries.
+///
+/// WHY NOT THE SYSTEM NOW-PLAYING, THE WAY WINDOWS DOES
+///
+/// SMTC hands any Windows process the current track for any app, browsers
+/// included. macOS has no public equivalent, and the private one --
+/// MediaRemote.framework -- is gated. Measured on macOS 15.6 (24G84, arm64)
+/// with Chrome playing, by `tools/probe_mac_nowplaying.sh`:
+///
+/// ```text
+/// unsigned      MRMediaRemoteGetNowPlayingInfo            -> (null)
+///               MRMediaRemoteGetNowPlayingApplicationIsPlaying -> no
+///               MRMediaRemoteGetNowPlayingClient          -> no client
+/// ad-hoc signed  identical
+/// entitled       SIGKILL at exec, every stage
+/// ```
+///
+/// All five symbols resolve, so the framework has not moved: the calls
+/// succeed and answer nothing. And claiming
+/// `com.apple.mediaremote.send-playback-commands` on an ad-hoc signature gets
+/// the process killed by the kernel before `main` -- that entitlement is
+/// Apple's to grant and it is not granted to us.
+///
+/// So the browser track name is not obtainable on macOS, full stop, and this
+/// reaches the two apps that publish a scripting dictionary instead. Browser
+/// audio is not lost: `audible.rs` counts it through Core Audio as time an app
+/// spent making sound, without a title.
 #[cfg(target_os = "macos")]
 fn current() -> Result<Option<Now>, String> {
     const SCRIPT: &str = r#"on q(a)

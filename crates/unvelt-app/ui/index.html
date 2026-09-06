@@ -286,10 +286,16 @@ function since(ms) {
 let paused = false;
 
 function card(s) {
-  return `<div class="src">
+  // No switch where this computer has no way to read the signal. Offering one
+  // would be offering a decision that changes nothing, and the silence that
+  // followed would look like a fault rather than a limit.
+  const control = s.available
+    ? `<button class="sw" role="switch" data-id="${esc(s.id)}"
+               aria-checked="${s.enabled}" aria-label="${esc(s.label)}"></button>`
+    : `<span class="soon-tag">not on this computer</span>`;
+  return `<div class="src${s.available ? "" : " soon"}">
     <h4>${esc(s.label)}</h4>
-    <button class="sw" role="switch" data-id="${esc(s.id)}"
-            aria-checked="${s.enabled}" aria-label="${esc(s.label)}"></button>
+    ${control}
     <p>${esc(s.gives)}</p>
     <p class="cost"><b>Sees:</b> ${esc(s.costs)}</p>
   </div>`;
