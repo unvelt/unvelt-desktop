@@ -424,6 +424,33 @@ mod tests {
     }
 
     #[test]
+    fn media_control_real_output_verbatim() {
+        // Ground truth, not a guess: exactly what `media-control get` printed
+        // on macOS 15.6 for a YouTube tab in Chrome, playing and then paused.
+        // `playing` is an explicit bool at the top level, which is the field
+        // this reads -- the `playbackRate` fallback is only insurance.
+        let playing = r#"{"playbackRate":1,"album":"","elapsedTime":41.859284,
+            "timestamp":"2026-09-06T19:55:37Z","bundleIdentifier":"com.google.Chrome",
+            "processIdentifier":40174,"title":"Tame Impala - Loser (Official Video)",
+            "artworkMimeType":"image/jpeg","duration":267.641,"artist":"tameimpalaVEVO",
+            "contentItemIdentifier":"6A76AA33-E987-419F-A8D2-89BDD2E1A3A5","playing":true}"#;
+        let now = parse_media_control(playing).unwrap().unwrap();
+        assert_eq!(now.app, "com.google.Chrome");
+        assert_eq!(now.title, "Tame Impala - Loser (Official Video)");
+        assert_eq!(now.artist, "tameimpalaVEVO");
+        assert!(now.playing);
+
+        let paused = r#"{"playbackRate":0,"album":"","elapsedTime":45.97728,
+            "timestamp":"2026-09-06T19:55:41Z","bundleIdentifier":"com.google.Chrome",
+            "processIdentifier":40174,"title":"Tame Impala - Loser (Official Video)",
+            "artworkMimeType":"image/jpeg","duration":267.641,"artist":"tameimpalaVEVO",
+            "contentItemIdentifier":"B5DB5724-61F4-4677-ADA1-53A2569B426B","playing":false}"#;
+        let now = parse_media_control(paused).unwrap().unwrap();
+        assert!(!now.playing, "playing:false must read as paused");
+        assert_eq!(now.title, "Tame Impala - Loser (Official Video)");
+    }
+
+    #[test]
     fn media_control_stream_payload_wrapper_and_playback_rate() {
         // The `stream` shape wraps the same fields under `payload`, and some
         // versions carry play state as a rate rather than a bool. Both are
