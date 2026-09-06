@@ -18,6 +18,7 @@ use crate::client::ApiClient;
 use crate::config::Config;
 use crate::envelope;
 use crate::handlers::{Handler, Tick};
+use crate::sources::Toggles;
 use crate::spool::Spool;
 use crate::{Status, VERSION};
 
@@ -38,6 +39,9 @@ pub struct Controller {
     /// than a handle to this struct, so no window can reach into a running
     /// loop -- see the note on `Status`.
     state: Arc<Mutex<Status>>,
+    /// The local per-device switches. Not the consent ledger -- see
+    /// `sources.rs` for why those are different questions.
+    toggles: Toggles,
 }
 
 impl Controller {
@@ -62,8 +66,11 @@ impl Controller {
             last_tick_ms: None,
             last_flush_ms: None,
             events_spooled: 0,
+            watching_since_ms: None,
             collecting: true,
             duplicate: false,
+            email: None,
+            uid: None,
         };
         Controller {
             cfg,
@@ -75,7 +82,12 @@ impl Controller {
             stop: Arc::new(AtomicBool::new(false)),
             paused: Arc::new(AtomicBool::new(false)),
             state: Arc::new(Mutex::new(state)),
+            toggles: Toggles::load(),
         }
+    }
+
+    pub fn toggles(&self) -> Toggles {
+        self.toggles.clone()
     }
 
     pub fn status_handle(&self) -> Arc<Mutex<Status>> {
@@ -107,6 +119,10 @@ impl Controller {
         if self.paused.load(Ordering::Relaxed) {
             self.publish(|st| {
                 st.collecting = false;
+                // Cleared, not kept: resuming starts a new stretch of
+                // watching, and carrying the old start time across a pause
+                // would claim coverage for minutes nobody was looking.
+                st.watching_since_ms = None;
                 st.last_tick_ms = Some(now);
             });
             return;
@@ -122,6 +138,12 @@ impl Controller {
         for i in 0..self.handlers.len() {
             let interval_ms = (self.handlers[i].interval() * 1000.0) as i64;
             if now - self.last_run[i] < interval_ms {
+                continue;
+            }
+            // A switch the person set on this machine. Checked here rather
+            // than by removing the handler, so turning it back on costs
+            // nothing and the handler keeps whatever state it had.
+            if !self.toggles.is_enabled(self.handlers[i].name()) {
                 continue;
             }
             self.last_run[i] = now;
@@ -152,6 +174,7 @@ impl Controller {
         let (files, bytes) = self.spool.stats();
         self.publish(|st| {
             st.collecting = true;
+            st.watching_since_ms.get_or_insert(now);
             st.last_tick_ms = Some(now);
             st.events_spooled += spooled;
             st.spool_files = files;

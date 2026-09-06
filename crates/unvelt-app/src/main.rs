@@ -27,7 +27,7 @@ use tauri::tray::TrayIconBuilder;
 use tauri::{Emitter, Manager};
 
 use unvelt_agent::{
-    auth, backend, client, config, controller, handlers, instance, spool, Probe, Status,
+    auth, backend, client, config, controller, handlers, instance, sources, spool, Probe, Status,
 };
 
 /// What the commands are allowed to reach.
@@ -38,6 +38,7 @@ use unvelt_agent::{
 struct App {
     status: Arc<Mutex<Status>>,
     paused: Arc<AtomicBool>,
+    toggles: sources::Toggles,
     cfg: config::Config,
     /// False when another unvelt already holds the collector lock. This
     /// instance then shows the window and reads nothing, rather than
@@ -52,7 +53,44 @@ fn status(app: tauri::State<'_, App>) -> Status {
         st.collecting = false;
         st.duplicate = true;
     }
+    // Read here rather than cached at startup: signing in from this window
+    // should change the answer without a restart.
+    if let Some(mut s) = auth::Session::load(&app.cfg) {
+        st.signed_in = true;
+        st.email = s.email();
+        st.uid = s.uid();
+    } else {
+        st.signed_in = false;
+    }
     st
+}
+
+#[tauri::command]
+fn sources(app: tauri::State<'_, App>) -> Vec<sources::Source> {
+    app.toggles.list()
+}
+
+/// Signals unvelt will collect but cannot yet. Shown without switches.
+#[tauri::command]
+fn planned() -> Vec<(&'static str, &'static str, &'static str)> {
+    sources::PLANNED.to_vec()
+}
+
+#[tauri::command]
+fn set_source(app: tauri::State<'_, App>, id: String, on: bool) -> Vec<sources::Source> {
+    app.toggles.set(&id, on);
+    app.toggles.list()
+}
+
+/// Forget the session on this machine.
+///
+/// Deletes the stored refresh token and nothing else. Events already collected
+/// stay in the spool and still belong to the person -- signing out is not a
+/// deletion request, and quietly treating it as one would lose data nobody
+/// asked to lose. Deleting an account's data is `DELETE /v1/me`, elsewhere.
+#[tauri::command]
+fn sign_out(app: tauri::State<'_, App>) -> bool {
+    std::fs::remove_file(auth::token_path(&app.cfg)).is_ok()
 }
 
 fn current(app: &tauri::State<'_, App>) -> Status {
@@ -116,7 +154,9 @@ fn main() {
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             show_window(app);
         }))
-        .invoke_handler(tauri::generate_handler![status, probe, set_paused, login])
+        .invoke_handler(tauri::generate_handler![
+            status, probe, set_paused, login, sources, planned, set_source, sign_out
+        ])
         .setup(|app| {
             // The controller owns a `Box<dyn Backend>`, which is not Send, so
             // it is built inside its own thread and only its handles come
@@ -159,18 +199,25 @@ fn main() {
                     let sp = spool::Spool::new(&cfg);
                     let hs = handlers::build_default(&cfg);
                     let mut ctl = controller::Controller::new(cfg.clone(), cl, sp, hs, backend);
-                    let _ = tx.send((ctl.status_handle(), ctl.pause_flag(), ctl.stop_flag(), cfg));
+                    let _ = tx.send((
+                        ctl.status_handle(),
+                        ctl.pause_flag(),
+                        ctl.stop_flag(),
+                        ctl.toggles(),
+                        cfg,
+                    ));
                     if collecting {
                         ctl.run();
                     }
                 })?;
-            let (status, paused, stop, cfg) = rx
+            let (status, paused, stop, toggles, cfg) = rx
                 .recv()
                 .map_err(|_| "the collector thread died before it started")?;
 
             app.manage(App {
                 status,
                 paused: paused.clone(),
+                toggles,
                 cfg,
                 collecting,
             });

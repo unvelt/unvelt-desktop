@@ -36,74 +36,129 @@
   body {
     margin: 0; background: var(--bg); color: var(--ink);
     font: 14px/1.55 -apple-system, "Segoe UI", system-ui, sans-serif;
-    padding: 20px 22px 28px;
+    padding: 22px 22px 30px;
   }
-  header { display: flex; align-items: baseline; gap: 10px; margin-bottom: 4px; }
-  h1 { font-size: 19px; margin: 0; letter-spacing: -0.01em; }
-  .ver { color: var(--dim); font-size: 12px; font-variant-numeric: tabular-nums; }
-  .did {
-    color: var(--muted); font-size: 12px; margin-bottom: 18px;
-    font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  h1 { font-size: 19px; margin: 0 0 18px; letter-spacing: -0.01em; }
+
+  /* A failure has to be visible in the window. An early build threw on its
+     first line and sat on "Starting..." forever with no error anywhere, which
+     cost a round trip to diagnose from a screenshot. Never silently again. */
+  #fatal {
+    display: none; background: var(--panel); border: 1px solid var(--off);
+    border-left: 4px solid var(--off); border-radius: 8px;
+    padding: 12px 14px; margin-bottom: 14px; font-size: 12.5px;
+  }
+  #fatal code {
+    display: block; margin-top: 6px; color: var(--off);
+    font-family: ui-monospace, Consolas, monospace;
+    white-space: pre-wrap; word-break: break-word;
   }
 
-  /* The coverage ribbon from the product's own vocabulary, used here as the
-     one piece of state that has to read at a glance from across a desk. */
+  /* The coverage ribbon, the product's own motif, carrying the one piece of
+     state that has to read from across a desk. */
   .state {
-    display: flex; align-items: center; gap: 12px;
+    display: flex; align-items: center; gap: 13px;
     background: var(--panel); border: 1px solid var(--line);
-    border-radius: 10px; padding: 14px 16px; margin-bottom: 14px;
+    border-radius: 10px; padding: 15px 16px; margin-bottom: 22px;
   }
-  .ribbon { width: 6px; height: 40px; border-radius: 3px; background: var(--on); flex: none; }
+  .ribbon { width: 6px; height: 42px; border-radius: 3px; background: var(--on); flex: none; }
   .ribbon.paused { background: var(--off); }
   .ribbon.blocked { background: var(--dim); }
-  .state h2 { margin: 0; font-size: 15px; font-weight: 600; }
-  .state p { margin: 2px 0 0; color: var(--muted); font-size: 12.5px; }
+  .state h2 { margin: 0; font-size: 15.5px; font-weight: 600; }
+  .state p { margin: 3px 0 0; color: var(--muted); font-size: 12.5px; }
 
-  section { margin-bottom: 16px; }
+  section { margin-bottom: 22px; }
   h3 {
     font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em;
-    color: var(--dim); margin: 0 0 8px; font-weight: 600;
+    color: var(--dim); margin: 0 0 9px; font-weight: 600;
   }
-  dl {
-    margin: 0; background: var(--panel); border: 1px solid var(--line);
-    border-radius: 10px; overflow: hidden;
-  }
-  .row {
-    display: flex; justify-content: space-between; gap: 16px;
-    padding: 8px 14px; border-top: 1px solid var(--line);
-  }
-  .row:first-child { border-top: 0; }
-  dt { color: var(--muted); flex: none; }
-  dd {
-    margin: 0; text-align: right; font-variant-numeric: tabular-nums;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
-    font-size: 12.5px;
-  }
-  /* A probe the OS refuses to answer is a fact about the machine, not a zero
-     to paper over -- so it renders as an explicit em dash, in the dim colour,
-     and never as 0 or false. */
-  dd.none { color: var(--dim); font-style: italic; font-family: inherit; }
+  .lede { margin: 0 0 12px; color: var(--muted); font-size: 12.5px; }
 
-  .actions { display: flex; gap: 8px; margin-top: 20px; flex-wrap: wrap; }
+  .src {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 13px 15px; margin-bottom: 8px;
+    display: grid; grid-template-columns: 1fr auto; gap: 5px 14px;
+  }
+  .src h4 { margin: 0; grid-column: 1; font-size: 13.5px; font-weight: 600; }
+  .src p { margin: 0; grid-column: 1; font-size: 12.5px; color: var(--muted); }
+  /* The cost line is not a footnote. A screen that lists only what a signal
+     gives you is a sales page, and this is the screen someone decides on. */
+  .src p.cost { color: var(--dim); }
+  .src p.cost b { color: var(--muted); font-weight: 600; }
+  .src.soon { opacity: .78; }
+  .soon-tag {
+    grid-column: 2; grid-row: 1; align-self: center; font-size: 11px;
+    color: var(--dim); border: 1px solid var(--line); border-radius: 999px;
+    padding: 2px 9px; white-space: nowrap;
+  }
+
+  .sw {
+    grid-column: 2; grid-row: 1 / span 3; align-self: center;
+    width: 42px; height: 24px; border-radius: 12px;
+    border: 1px solid var(--line); background: var(--line);
+    position: relative; cursor: pointer; padding: 0; transition: background .12s;
+  }
+  .sw[aria-checked="true"] { background: var(--accent); border-color: var(--accent); }
+  .sw::after {
+    content: ""; position: absolute; top: 2px; left: 2px;
+    width: 18px; height: 18px; border-radius: 50%; background: var(--panel);
+    transition: transform .12s;
+  }
+  .sw[aria-checked="true"]::after { transform: translateX(18px); }
+  @media (prefers-reduced-motion: reduce) { .sw, .sw::after { transition: none; } }
+
+  .who {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 13px 15px;
+  }
+  .who .addr { font-weight: 600; }
+
   button {
     font: inherit; padding: 8px 14px; border-radius: 8px; cursor: pointer;
     border: 1px solid var(--line); background: var(--panel); color: var(--ink);
   }
-  button:hover { border-color: var(--accent); }
+  button:hover:not([disabled]) { border-color: var(--accent); }
   button.primary { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+  button.quiet { padding: 6px 11px; font-size: 12.5px; }
   button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   button[disabled] { opacity: .55; cursor: default; }
-  .note { color: var(--muted); font-size: 12px; margin-top: 12px; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  .note { color: var(--muted); font-size: 12px; margin: 12px 0 0; }
   .err { color: var(--off); }
+
+  /* Everything an operator wants and a person does not. Kept, because "open
+     this and read me the last line" is how support works -- but closed by
+     default, because a live readout of what we can see reads as surveillance
+     rather than as reassurance. */
+  details { margin-top: 26px; border-top: 1px solid var(--line); padding-top: 14px; }
+  summary {
+    cursor: pointer; color: var(--dim); font-size: 11px;
+    text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600;
+  }
+  dl { margin: 12px 0 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .row {
+    display: flex; justify-content: space-between; gap: 16px;
+    padding: 7px 13px; border-top: 1px solid var(--line); background: var(--panel);
+  }
+  .row:first-child { border-top: 0; }
+  dt { color: var(--muted); flex: none; font-size: 12.5px; }
+  dd {
+    margin: 0; text-align: right; font-variant-numeric: tabular-nums;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-family: ui-monospace, Consolas, monospace; font-size: 12px;
+  }
+  dd.none { color: var(--dim); font-style: italic; font-family: inherit; }
 </style>
 </head>
 <body>
-  <header>
-    <h1>unvelt</h1>
-    <span class="ver" id="ver"></span>
-  </header>
-  <div class="did" id="did"></div>
+  <h1>unvelt</h1>
+
+  <div id="fatal">
+    <strong>This window could not reach the collector.</strong>
+    Collection itself is unaffected — it runs whether this panel works or not.
+    <code id="fatalMsg"></code>
+  </div>
 
   <div class="state">
     <div class="ribbon" id="ribbon"></div>
@@ -114,32 +169,60 @@
   </div>
 
   <section>
-    <h3>What this machine is doing</h3>
-    <dl id="probe"></dl>
+    <h3>What unvelt can see</h3>
+    <p class="lede">
+      Each of these is separate, and off means off on this computer straight
+      away. Turning one off never deletes anything already collected.
+    </p>
+    <div id="sources"></div>
+    <div class="actions" style="margin-top:12px">
+      <button id="pause">Pause everything</button>
+    </div>
   </section>
 
   <section>
-    <h3>Collection</h3>
-    <dl id="coll"></dl>
+    <h3>Not collected yet</h3>
+    <p class="lede">
+      These are coming. They are listed now so you can see where unvelt is
+      going before you decide to keep it.
+    </p>
+    <div id="planned"></div>
   </section>
 
-  <div class="actions">
-    <button id="signin" class="primary" hidden>Sign in with Google</button>
-    <button id="pause">Pause collection</button>
-    <button id="refresh">Refresh</button>
-  </div>
-  <p class="note" id="note"></p>
+  <section>
+    <h3>Account</h3>
+    <div class="who">
+      <div class="addr" id="who">Not signed in</div>
+      <button id="signin" class="primary quiet" hidden>Sign in</button>
+      <button id="signout" class="quiet" hidden>Sign out</button>
+    </div>
+    <p class="note" id="note"></p>
+  </section>
+
+  <details>
+    <summary>Technical details</summary>
+    <dl id="tech"></dl>
+  </details>
 
 <script type="module">
-const { invoke } = window.__TAURI__.core;
+// Every failure in here has to end up on screen.
+function fatal(err) {
+  document.getElementById("fatal").style.display = "block";
+  document.getElementById("fatalMsg").textContent = String(err && err.stack || err);
+}
+window.addEventListener("error", (e) => fatal(e.error || e.message));
+window.addEventListener("unhandledrejection", (e) => fatal(e.reason));
+
+const invoke = window.__TAURI__?.core?.invoke;
+if (!invoke) {
+  fatal("window.__TAURI__ is undefined. The app was built without " +
+        "`withGlobalTauri`, so the UI has no way to call the collector.");
+}
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"]/g, c => (
   { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
-// A value the platform did not give us renders as an em dash, never as 0 or
-// false — the same rule the collector follows when it stays quiet rather than
-// inventing a reading.
 function rows(el, pairs) {
   el.innerHTML = pairs.map(([k, v]) => {
     const none = v === null || v === undefined || v === "";
@@ -160,42 +243,89 @@ function ago(ms) {
   return `${Math.round(s / 3600)}h ago`;
 }
 
+// "since 9:14 this morning" is the version of "is it working" a person can
+// actually check. A count of events is the version an engineer wanted.
+function since(ms) {
+  if (!ms) return "";
+  const d = new Date(ms);
+  const clock = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const mins = (Date.now() - ms) / 60000;
+  if (mins < 2) return "since just now";
+  if (d.toDateString() !== new Date().toDateString()) return `since ${clock} yesterday`;
+  const h = d.getHours();
+  const part = h < 12 ? "this morning" : h < 17 ? "this afternoon" : "this evening";
+  return `since ${clock} ${part}`;
+}
+
 let paused = false;
 
+function card(s) {
+  return `<div class="src">
+    <h4>${esc(s.label)}</h4>
+    <button class="sw" role="switch" data-id="${esc(s.id)}"
+            aria-checked="${s.enabled}" aria-label="${esc(s.label)}"></button>
+    <p>${esc(s.gives)}</p>
+    <p class="cost"><b>Sees:</b> ${esc(s.costs)}</p>
+  </div>`;
+}
+
+async function drawSources() {
+  const list = await invoke("sources");
+  const el = $("sources");
+  el.innerHTML = list.map(card).join("");
+  el.querySelectorAll(".sw").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const on = btn.getAttribute("aria-checked") !== "true";
+      btn.setAttribute("aria-checked", String(on));
+      await invoke("set_source", { id: btn.dataset.id, on });
+      drawSources().catch(fatal);
+    });
+  });
+}
+
+async function drawPlanned() {
+  const list = await invoke("planned");
+  $("planned").innerHTML = list.map(([label, gives, costs]) => `
+    <div class="src soon">
+      <h4>${esc(label)}</h4>
+      <span class="soon-tag">not yet</span>
+      <p>${esc(gives)}</p>
+      <p class="cost"><b>Will see:</b> ${esc(costs)}</p>
+    </div>`).join("");
+}
+
 async function draw() {
+  if (!invoke) return;
   const st = await invoke("status");
   paused = !st.collecting;
-
-  $("ver").textContent = `v${st.version} · ${st.platform}`;
-  $("did").textContent = `${st.device_id} · ${st.host}`;
 
   const ribbon = $("ribbon");
   ribbon.className = "ribbon" + (paused ? " paused" : st.signed_in ? "" : " blocked");
   if (st.duplicate) {
-    // Not an error: this window is useful, it just is not the one reading the
-    // machine. Say which, so nobody quits the wrong one.
     ribbon.className = "ribbon blocked";
-    $("stateTitle").textContent = "Another unvelt is collecting";
-    $("stateSub").textContent =
-      "This window is watching it. Two collectors would count the same day twice.";
-  } else if (!st.signed_in) {
-    $("stateTitle").textContent = "Collecting, but not signed in";
-    $("stateSub").textContent =
-      "Everything is kept on this machine until you sign in. Nothing is lost.";
+    $("stateTitle").textContent = "Another copy is already running";
+    $("stateSub").textContent = "This window is watching that one.";
   } else if (paused) {
     $("stateTitle").textContent = "Paused";
-    $("stateSub").textContent =
-      "Nothing is being read. The gap will be recorded as one you chose.";
+    $("stateSub").textContent = "Nothing is being read from this computer.";
+  } else if (!st.signed_in) {
+    $("stateTitle").textContent = "Watching, but not signed in";
+    $("stateSub").textContent = "Everything stays on this computer until you sign in.";
   } else {
-    $("stateTitle").textContent = "Collecting";
-    $("stateSub").textContent = `Sending to ${st.endpoint.replace(/^https?:\/\//, "")}`;
+    $("stateTitle").textContent = "Watching";
+    $("stateSub").textContent = since(st.watching_since_ms);
   }
 
+  $("who").textContent = st.email || (st.signed_in ? "Signed in" : "Not signed in");
+  $("signout").hidden = !st.signed_in;
   $("signin").hidden = st.signed_in;
-  $("pause").textContent = paused ? "Resume collection" : "Pause collection";
+  $("pause").textContent = paused ? "Resume" : "Pause everything";
 
-  rows($("coll"), [
-    ["Signed in", st.signed_in ? "yes" : "no"],
+  rows($("tech"), [
+    ["Version", st.version],
+    ["Device", `${st.device_id} · ${st.platform}`],
+    ["Account id", st.uid],
+    ["Sending to", st.endpoint],
     ["Events this session", st.events_spooled],
     ["Last read", ago(st.last_tick_ms)],
     ["Last upload", ago(st.last_flush_ms)],
@@ -203,31 +333,19 @@ async function draw() {
       ? `${st.spool_files} batch${st.spool_files === 1 ? "" : "es"} · ${bytes(st.spool_bytes)}`
       : "nothing queued"],
   ]);
-
-  const p = await invoke("probe");
-  rows($("probe"), [
-    ["Foreground app", p.app],
-    ["Window title", p.title],
-    ["Idle", `${p.idle_s.toFixed(0)}s`],
-    ["Fullscreen", p.fullscreen === null ? null : (p.fullscreen ? "yes" : "no")],
-    ["Screen locked", p.locked === null ? null : (p.locked ? "yes" : "no")],
-    ["Monitors", p.monitors],
-    ["Wi-Fi", p.ssid],
-    ["Network", p.net],
-    ["Power", p.ac === null ? null
-      : `${p.ac ? "mains" : "battery"}${p.battery_pct === null ? "" : ` · ${p.battery_pct}%`}`],
-  ]);
 }
 
 $("pause").addEventListener("click", async () => {
   paused = await invoke("set_paused", { paused: !paused });
-  draw();
+  draw().catch(fatal);
 });
-$("refresh").addEventListener("click", draw);
+$("signout").addEventListener("click", async () => {
+  await invoke("sign_out");
+  draw().catch(fatal);
+});
 $("signin").addEventListener("click", async () => {
   const btn = $("signin");
   btn.disabled = true;
-  btn.textContent = "Waiting for your browser…";
   $("note").className = "note";
   $("note").textContent = "A browser tab has opened. Pick the account you use on your phone.";
   try {
@@ -238,14 +356,15 @@ $("signin").addEventListener("click", async () => {
     $("note").textContent = String(e);
   }
   btn.disabled = false;
-  btn.textContent = "Sign in with Google";
-  draw();
+  draw().catch(fatal);
 });
 
-draw();
+drawSources().catch(fatal);
+drawPlanned().catch(fatal);
+draw().catch(fatal);
 // The window is usually hidden; polling only matters while someone is looking
 // at it, and two seconds is faster than the collector's own five-second tick.
-setInterval(() => { if (!document.hidden) draw(); }, 2000);
+setInterval(() => { if (!document.hidden) draw().catch(fatal); }, 2000);
 </script>
 </body>
 </html>

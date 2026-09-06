@@ -24,6 +24,7 @@ pub mod controller;
 pub mod envelope;
 pub mod handlers;
 pub mod instance;
+pub mod sources;
 pub mod spool;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -56,7 +57,15 @@ pub struct Status {
     pub last_tick_ms: Option<i64>,
     pub last_flush_ms: Option<i64>,
     pub events_spooled: u64,
+    /// When this machine last started watching. The one piece of proof a
+    /// person actually needs -- "since 9:14 this morning" answers "is it
+    /// working" in a way an event counter never does. Cleared on pause, so it
+    /// can never claim coverage across a gap the person chose.
+    pub watching_since_ms: Option<i64>,
     pub collecting: bool,
+    /// Who this machine is signed in as. `None` until a session exists.
+    pub email: Option<String>,
+    pub uid: Option<String>,
     /// True when another unvelt already holds the collector lock, so this
     /// process is a window onto someone else's loop and is reading nothing.
     pub duplicate: bool,

@@ -121,16 +121,23 @@ impl Session {
     /// matters is decided server-side, where the token IS verified — the
     /// envelope's `uid` is advisory and ingest keys on the token subject.
     pub fn uid(&mut self) -> Option<String> {
+        // Firebase puts it in `user_id`; `sub` carries the same value and is
+        // the standard claim, so accept either.
+        self.claim("user_id").or_else(|| self.claim("sub"))
+    }
+
+    /// The address this machine is signed in as. Shown so that "signed in" is
+    /// answerable as *who*, which is the only version of it a person can check.
+    pub fn email(&mut self) -> Option<String> {
+        self.claim("email")
+    }
+
+    fn claim(&mut self, name: &str) -> Option<String> {
         let tok = self.id_token()?;
         let payload = tok.split('.').nth(1)?;
         let json = b64url_decode(payload)?;
         let v: serde_json::Value = serde_json::from_slice(&json).ok()?;
-        // Firebase puts it in `user_id`; `sub` carries the same value and is
-        // the standard claim, so accept either.
-        v.get("user_id")
-            .or_else(|| v.get("sub"))
-            .and_then(|x| x.as_str())
-            .map(str::to_string)
+        v.get(name).and_then(|x| x.as_str()).map(str::to_string)
     }
 }
 
