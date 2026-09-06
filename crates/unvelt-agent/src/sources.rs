@@ -104,6 +104,17 @@ pub const CATALOGUE: &[(&str, &str, &str, &str, bool)] = &[
         true,
     ),
     (
+        "ambient",
+        "Focus mode and audio output",
+        "Whether you had asked not to be interrupted, and whether you were on \
+         headphones. Without the first, a quiet evening and an evening you \
+         silenced look identical.",
+        "Whether Do Not Disturb was on, and what your audio was playing \
+         through, including the device name — which is often a person's own \
+         name. Never what was playing; that is a separate switch.",
+        true,
+    ),
+    (
         "notif",
         "Notifications",
         "Which apps interrupt you and how often. Interruptions are most of \

@@ -45,6 +45,8 @@ pub trait Handler {
 }
 
 mod activity;
+mod ambient;
+mod audible;
 mod capture;
 mod focus;
 mod location;
@@ -55,6 +57,8 @@ mod power;
 mod session;
 
 pub use activity::ActivityHandler;
+pub use ambient::AmbientHandler;
+pub use audible::AudibleHandler;
 pub use capture::CaptureHandler;
 pub use focus::FocusHandler;
 pub use location::LocationHandler;
@@ -87,5 +91,9 @@ pub fn build_default(cfg: &Config) -> Vec<Box<dyn Handler>> {
         Box::new(MacNotifHandler::new(cfg)),
         Box::new(MediaHandler::new(cfg)),
         Box::new(CaptureHandler::new(cfg)),
+        // macOS only in practice: on Windows SMTC already reports browsers
+        // with the track, so there is nothing for this to rescue.
+        Box::new(AudibleHandler::new(cfg)),
+        Box::new(AmbientHandler::new(cfg)),
     ]
 }

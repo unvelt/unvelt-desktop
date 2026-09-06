@@ -131,10 +131,31 @@ built there and nowhere else — the development machine is Windows, and a
 | probes | native Win32 | subprocess | subprocess, X11 |
 | lock/unlock | yes | — | — |
 | fullscreen | yes | — | — |
-| notifications | yes (`wpndatabase.db`) | planned (`usernoted`) | — |
-| media | yes (SMTC) | planned (3 layers) | planned (MPRIS2) |
-| camera / mic | yes (consent store) | — | — |
+| notifications | yes (`wpndatabase.db`) | yes (`usernoted`, needs Full Disk Access) | — |
+| media, with track | yes (SMTC, browsers included) | Music and Spotify only | — |
+| audio by app | not needed — SMTC covers it | yes (Core Audio) | — |
+| camera | yes, names the app | yes, **cannot** name the app | — |
+| microphone | yes, names the app | yes, names the app | — |
+| focus mode (DND) | yes, once the setting has been touched | yes | — |
+| audio output route | — | yes | — |
 | sleep / wake | yes | yes | yes |
+
+**The one asymmetry to know before reading the data.** On Windows, SMTC reports
+browser playback with the track, artist and album. On macOS nothing does:
+browsers publish no now-playing to AppleScript, so a Mac gets `desktop.playing`
+— *this app was making sound, for this long* — and no track. That gap is real,
+and only the opt-in `mediaremote-adapter` route closes it. It is not built.
+
+`desktop.playing` is deliberately **not** `media.play`. Audible is broader than
+media: a ding, a call and a game all make sound, and folding them into
+`media_min` would turn a two-hour call into two hours of listening while the
+phone disagreed about the same day. They overlap where both see one Spotify
+play, so nothing ever sums them.
+
+A second asymmetry, smaller: on macOS the microphone can be attributed to an
+app but the camera cannot — CoreMediaIO reports that a camera is running and
+nothing about who is running it. `desktop.capture` omits `app` there rather
+than inventing one.
 
 Notifications and media are **off until you turn them on**. On Android both sit
 behind an OS permission granted by hand; on Windows they sit behind nothing —

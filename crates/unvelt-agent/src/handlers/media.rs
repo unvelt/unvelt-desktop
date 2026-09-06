@@ -203,11 +203,64 @@ fn current() -> Result<Option<Now>, String> {
     }))
 }
 
-#[cfg(not(windows))]
+/// macOS layer one: the apps that publish a scripting dictionary.
+///
+/// Music and Spotify, and nothing else. Browsers are the gap this cannot
+/// close -- Chrome and Brave expose the active tab's title and URL and nothing
+/// about which tab is audible -- and that gap is why `desktop.playing` exists.
+/// A third layer (`mediaremote-adapter`) is the only route to browser TRACK
+/// metadata on macOS and is not built; see docs/desktop-plan.md.
+#[cfg(target_os = "macos")]
 fn current() -> Result<Option<Now>, String> {
-    // MPRIS2 on Linux and the three-layer macOS design belong here; both are
-    // their own change, and returning "nothing playing" is the honest interim
-    // answer rather than pretending the platform said so.
+    const SCRIPT: &str = r#"on q(a)
+  tell application "System Events"
+    if not (exists process a) then return ""
+  end tell
+  tell application a
+    if it is not running then return ""
+    try
+      set s to (player state as text)
+    on error
+      return ""
+    end try
+    if s is not "playing" and s is not "paused" then return ""
+    try
+      return a & "<<>>" & s & "<<>>" & (name of current track) & "<<>>" & (artist of current track) & "<<>>" & (album of current track)
+    on error
+      return a & "<<>>" & s & "<<>>" & "" & "<<>>" & "" & "<<>>" & ""
+    end try
+  end tell
+end q
+set r to q("Spotify")
+if r is "" then set r to q("Music")
+return r"#;
+
+    let out = crate::backend::run("osascript", &["-e", SCRIPT]);
+    let out = out.trim();
+    if out.is_empty() {
+        return Ok(None);
+    }
+    let p: Vec<&str> = out.split("<<>>").collect();
+    let get = |i: usize| p.get(i).map(|s| s.trim().to_string()).unwrap_or_default();
+    Ok(Some(Now {
+        // The bundle id namespace `desktop.focus` uses, so one app has one key.
+        app: match get(0).as_str() {
+            "Spotify" => "com.spotify.client".into(),
+            "Music" => "com.apple.Music".into(),
+            other => other.to_string(),
+        },
+        playing: get(1) == "playing",
+        title: get(2),
+        artist: get(3),
+        album: get(4),
+    }))
+}
+
+#[cfg(all(not(windows), not(target_os = "macos")))]
+fn current() -> Result<Option<Now>, String> {
+    // MPRIS2 over D-Bus belongs here and is its own change. Returning "nothing
+    // playing" is the honest interim answer rather than pretending the
+    // platform said so.
     Ok(None)
 }
 

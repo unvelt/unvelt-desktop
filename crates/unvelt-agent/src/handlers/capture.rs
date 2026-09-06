@@ -96,6 +96,15 @@ impl Handler for CaptureHandler {
 }
 
 fn edge(tick: &Tick, dev: &str, app: &str, on: u8) -> Event {
+    let mut p = serde_json::Map::new();
+    p.insert("dev".into(), serde_json::json!(dev));
+    p.insert("on".into(), serde_json::json!(on));
+    // Omitted rather than empty when the platform will not say who holds the
+    // device -- CoreMediaIO reports that a camera is running and nothing
+    // about which app. An empty string would read as an app with no name.
+    if !app.is_empty() {
+        p.insert("app".into(), serde_json::json!(app));
+    }
     tick.event(
         "desktop",
         "capture",
@@ -104,7 +113,7 @@ fn edge(tick: &Tick, dev: &str, app: &str, on: u8) -> Event {
         // change independently and can move in the same tick, so a
         // timestamp-only eid would collide two real edges into one.
         format!("dt:{}:cap:{dev}:{on}:{}", tick.cfg.did, tick.now),
-        Some(serde_json::json!({ "dev": dev, "on": on, "app": app })),
+        Some(serde_json::Value::Object(p)),
     )
 }
 
@@ -122,13 +131,39 @@ fn in_use() -> Result<InUse, String> {
     Ok(out)
 }
 
-#[cfg(not(windows))]
+/// macOS, from Core Audio and CoreMediaIO. Both public, neither prompts.
+///
+/// The asymmetry with Windows is real and shows in the data: Core Audio names
+/// the process holding the microphone, CoreMediaIO exposes only whether a
+/// camera is running and nothing about who is running it. So `cam` arrives
+/// with no `app` here. The payload omits the field rather than inventing a
+/// value, because "we do not know which app" and "some app called ''" are
+/// different facts.
+#[cfg(target_os = "macos")]
 fn in_use() -> Result<InUse, String> {
-    // macOS exposes no equivalent without either a private framework or
-    // parsing the unified log, and Linux would mean watching /dev/video* and
-    // PulseAudio separately. Both are their own change; reporting nothing is
-    // the honest interim answer rather than pretending the platform said so.
-    Err("camera and microphone state is Windows-only for now".into())
+    let mut out = InUse::new();
+    for app in crate::backend::mac_av::recording_apps() {
+        out.insert(("mic", app));
+    }
+    match crate::backend::mac_av::camera_running() {
+        // An empty app is the marker for "running, holder unknown". `edge`
+        // omits the field when it sees this.
+        Some(true) => {
+            out.insert(("cam", String::new()));
+        }
+        Some(false) => {}
+        // CoreMediaIO would not answer. Saying nothing is right: "no camera is
+        // on" and "we cannot see cameras" are different claims.
+        None => {}
+    }
+    Ok(out)
+}
+
+#[cfg(all(not(windows), not(target_os = "macos")))]
+fn in_use() -> Result<InUse, String> {
+    // Linux would mean watching /dev/video* and PulseAudio separately, which
+    // is its own change.
+    Err("camera and microphone state is not implemented on this platform".into())
 }
 
 #[cfg(windows)]

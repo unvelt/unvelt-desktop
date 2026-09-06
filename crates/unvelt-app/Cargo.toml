@@ -1,6 +1,6 @@
 [package]
 name = "unvelt-app"
-version = "0.1.4"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.82"
 description = "The unvelt desktop app: a tray icon, a status window, and the collector running behind both."
