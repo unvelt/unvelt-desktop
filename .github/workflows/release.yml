@@ -22,6 +22,10 @@ on:
 
 permissions:
   contents: write
+  # Required for Workload Identity Federation: GitHub mints a short-lived OIDC
+  # token for this run, and GCP trades it for a service-account credential.
+  # Nothing long-lived is stored on either side.
+  id-token: write
 
 jobs:
   build:
@@ -58,15 +62,50 @@ jobs:
       - name: Tauri CLI
         run: cargo install tauri-cli --version "^2" --locked
 
+      # The OAuth client is compiled into the binary, because an app launched
+      # from Finder or the Start menu inherits no environment -- but it does
+      # not live in this repository. It is read here, at build time, from the
+      # same Secret Manager that already holds the database passwords and the
+      # invite code, so there is one place to rotate and one place to audit.
+      #
+      # Keyless: GitHub mints an OIDC token for this run and GCP trades it for
+      # a short-lived credential. The provider is bound to
+      # `assertion.repository == 'unvelt/unvelt-desktop'`, which is the entire
+      # security boundary -- without that condition any repository on GitHub
+      # could mint a token for this pool.
+      #
+      # `unvelt-ci` can read exactly these two secrets. It cannot read the
+      # database passwords or the invite code; a build has no business with
+      # those.
+      - id: gcp
+        uses: google-github-actions/auth@v2
+        with:
+          project_id: compound-506422
+          workload_identity_provider: projects/597664437266/locations/global/workloadIdentityPools/github/providers/unvelt-desktop
+          service_account: unvelt-ci@compound-506422.iam.gserviceaccount.com
+
+      - id: oauth
+        uses: google-github-actions/get-secretmanager-secrets@v2
+        with:
+          secrets: |-
+            client_id:compound-506422/unvelt-oauth-client-id
+            client_secret:compound-506422/unvelt-oauth-client-secret
+
       - name: Build
         run: cargo tauri build --target ${{ matrix.target }}
         working-directory: crates/unvelt-app
+        env:
+          UNVELT_BUILD_OAUTH_CLIENT_ID: ${{ steps.oauth.outputs.client_id }}
+          UNVELT_BUILD_OAUTH_CLIENT_SECRET: ${{ steps.oauth.outputs.client_secret }}
 
       # The headless agent ships alongside the app. It is the thing to reach
       # for when the window is the part that is broken, and it is how a
       # machine with no desktop session collects at all.
       - name: Build the CLI
         run: cargo build --release --target ${{ matrix.target }} -p unvelt-agent
+        env:
+          UNVELT_BUILD_OAUTH_CLIENT_ID: ${{ steps.oauth.outputs.client_id }}
+          UNVELT_BUILD_OAUTH_CLIENT_SECRET: ${{ steps.oauth.outputs.client_secret }}
 
       # Split from the agent upload deliberately. Both were one step with one
       # glob, so when macOS and Linux bundled nothing the bare agent binary

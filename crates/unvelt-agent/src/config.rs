@@ -84,6 +84,28 @@ fn env_flag(key: &str) -> bool {
 /// because the shared-key gate it used was replaced by real token auth.
 const DEFAULT_URL: &str = "https://compound-ingest-nexyqgrgbq-el.a.run.app";
 
+/// The Desktop OAuth client, registered once in the Cloud console.
+///
+/// Compiled in because an app launched from Finder or the Start menu inherits
+/// no environment. Reading these from `UNVELT_OAUTH_CLIENT_ID` worked while
+/// the only caller was a shell, and broke the moment someone installed the
+/// app and pressed Sign in -- which is the only way it will ever be used.
+///
+/// The "secret" is compiled in with it, and that is correct rather than
+/// careless. RFC 8252 §8.5 is explicit that a native app cannot keep one: it
+/// ships inside every copy of the binary and anyone can read it out. That is
+/// exactly why this flow uses PKCE -- the exchange is protected by a verifier
+/// generated per sign-in and never sent until the exchange, not by this
+/// string. Treating it as a secret would buy nothing and would mean an
+/// installer that has to fetch it from somewhere, which is a real dependency
+/// traded for a pretend one.
+///
+/// What it does NOT protect against is someone building an app that shows
+/// Google's consent screen under unvelt's name. Nothing here can; that is
+/// what signing and notarization are for, and they are not bought yet.
+const DEFAULT_OAUTH_CLIENT_ID: Option<&str> = option_env!("UNVELT_BUILD_OAUTH_CLIENT_ID");
+const DEFAULT_OAUTH_CLIENT_SECRET: Option<&str> = option_env!("UNVELT_BUILD_OAUTH_CLIENT_SECRET");
+
 const DEFAULT_API_KEY: &str = "AIzaSyC2KeGrmf35qT1z21CP72EEp9TNuaL77eg";
 
 pub const OSNAME: &str = if cfg!(target_os = "windows") {
@@ -116,8 +138,17 @@ impl Config {
                 .to_string(),
             key: env_str("UNVELT_INGEST_KEY", ""),
             api_key: env_str("UNVELT_FIREBASE_API_KEY", DEFAULT_API_KEY),
-            oauth_client_id: env_str("UNVELT_OAUTH_CLIENT_ID", ""),
-            oauth_client_secret: env_str("UNVELT_OAUTH_CLIENT_SECRET", ""),
+            // Runtime environment first, so a local build or a second Google
+            // project needs no rebuild; then whatever the release workflow
+            // compiled in; then nothing, and `--login` says so plainly.
+            oauth_client_id: env_str(
+                "UNVELT_OAUTH_CLIENT_ID",
+                DEFAULT_OAUTH_CLIENT_ID.unwrap_or(""),
+            ),
+            oauth_client_secret: env_str(
+                "UNVELT_OAUTH_CLIENT_SECRET",
+                DEFAULT_OAUTH_CLIENT_SECRET.unwrap_or(""),
+            ),
             host,
             osname,
             did,
