@@ -147,6 +147,14 @@ fn ctrlc_handler(stop: std::sync::Arc<std::sync::atomic::AtomicBool>) -> Result<
     Ok(())
 }
 
+/// Enough of an identifier to recognise, not enough to copy out of a screen
+/// shot. A client id is not a secret, but a probe's output gets pasted around
+/// and there is no reason for it to carry the whole string.
+fn short(id: &str) -> String {
+    let head: String = id.chars().take(12).collect();
+    format!("{head}...")
+}
+
 /// Print every probe once. This is the first thing to run on a new machine: it
 /// answers "which of these does this OS actually let us see" in one line each,
 /// which is the question the whole design turns on.
@@ -181,4 +189,19 @@ fn probe(cfg: &config::Config) {
             "no -- run --login"
         }
     );
+    // Shown before the sign-in line is acted on, because "--login did nothing
+    // useful" and "the client id never reached the process" look identical
+    // from the outside and have completely different fixes.
+    println!(
+        "  oauth client {}",
+        match (
+            cfg.oauth_client_id.is_empty(),
+            cfg.oauth_client_secret.is_empty()
+        ) {
+            (true, _) => "not set -- see SETUP.md".to_string(),
+            (false, true) => format!("{} (no secret set)", short(&cfg.oauth_client_id)),
+            (false, false) => format!("{} + secret", short(&cfg.oauth_client_id)),
+        }
+    );
+    println!("  posting to   {}", cfg.url);
 }
