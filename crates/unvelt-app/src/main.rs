@@ -31,6 +31,18 @@ use unvelt_agent::{
     Probe, Status,
 };
 
+// macOS keeps two of unvelt's signals behind grants no Settings pane can
+// hand out: the microphone pane has no "+" button, so an app that never asks
+// is never granted, and the front window's title stays empty until the app
+// is trusted for accessibility. `src/mac_perms.m`, compiled into the link by
+// build.rs, asks for both. Asked before the collector thread spawns, so its
+// first poll already sees what it may.
+#[cfg(target_os = "macos")]
+extern "C" {
+    fn unvelt_request_mic();
+    fn unvelt_prompt_accessibility() -> bool;
+}
+
 /// What the commands are allowed to reach.
 ///
 /// Deliberately without the stop flag: quitting belongs to the tray menu,
@@ -239,6 +251,17 @@ fn main() {
             set_content_app
         ])
         .setup(|app| {
+            // Ask macOS for what its Settings cannot grant by hand (see the
+            // extern block above). Both calls are no-ops once granted: the
+            // mic request only fires while the answer is "not determined",
+            // and the accessibility prompt only shows while untrusted. The
+            // trusted bool is advisory for now; the prompt itself is the
+            // delivery mechanism.
+            #[cfg(target_os = "macos")]
+            unsafe {
+                unvelt_request_mic();
+                unvelt_prompt_accessibility();
+            }
             // The controller owns a `Box<dyn Backend>`, which is not Send, so
             // it is built inside its own thread and only its handles come
             // back out. That is also the honest arrangement: nothing outside

@@ -1,6 +1,6 @@
 [package]
 name = "unvelt-app"
-version = "0.3.2"
+version = "0.3.3"
 edition = "2021"
 rust-version = "1.82"
 description = "The unvelt desktop app: a tray icon, a status window, and the collector running behind both."
@@ -9,6 +9,11 @@ publish = false
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+# build.rs compiles src/mac_perms.m on macOS targets and links the four
+# frameworks it calls. The target check lives inside build.rs, on the target
+# env rather than a host cfg, so this crate has to be present on every host:
+# build scripts compile for the host whatever they compile for.
+cc = "1"
 
 [dependencies]
 # The collector, embedded rather than supervised as a sidecar. See the note at

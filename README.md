@@ -208,7 +208,10 @@ play, so nothing ever sums them.
 A second asymmetry, smaller: on macOS the microphone can be attributed to an
 app but the camera cannot — CoreMediaIO reports that a camera is running and
 nothing about who is running it. `desktop.capture` omits `app` there rather
-than inventing one.
+than inventing one. Both asks happen once, at first launch: macOS shows a
+microphone dialog (unvelt reads Core Audio's in-use flags; it never records)
+and an accessibility prompt (the front window's title comes through System
+Events). Neither pane can be granted by hand — the app has to ask, and does.
 
 Notifications and media are **off until you turn them on**. On Android both sit
 behind an OS permission granted by hand; on Windows they sit behind nothing —

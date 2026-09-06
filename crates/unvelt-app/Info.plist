@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!--
+    Required for the microphone TCC grant to be requestable at all. unvelt
+    never records: it reads Core Audio's per-process "is running input" flag
+    to know a mic is in use and by which app, and those flags are invisible to
+    a process without this grant -- which is why mic use AND desktop.playing
+    both came back empty until this shipped. Camera needs no key: CoreMediaIO
+    answers "is a camera on" without one, and unvelt never opens the camera.
+  -->
+  <key>NSMicrophoneUsageDescription</key>
+  <string>unvelt notes when the microphone is in use and by which app, so time on a call reads as a call rather than as time away from the machine. It never records audio.</string>
+  <!--
+    Automation. The front window's name and title, and the current track from
+    Music and Spotify, are read through System Events; without this key the
+    Apple event is denied silently. unvelt only reads -- it sends no commands.
+  -->
+  <key>NSAppleEventsUsageDescription</key>
+  <string>unvelt reads the name and title of the window you are in, and the track playing in Music or Spotify. It never sends commands.</string>
+</dict>
+</plist>
