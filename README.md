@@ -171,9 +171,12 @@ browser playback with the track, artist and album. On macOS nothing does:
 browsers publish no now-playing to AppleScript, so a Mac gets `desktop.playing`
 — *this app was making sound, for this long* — and no track.
 
-**That gap does not close.** MediaRemote.framework is the only API that ever
-reported system now-playing, and it is gated. Measured on macOS 15.6 (24G84,
-arm64) with Chrome playing, by `tools/probe_mac_nowplaying.sh`:
+**A normal app cannot close this gap; a code-signing loophole can.**
+MediaRemote.framework is the only API that ever reported system now-playing,
+and since 15.4 `mediaremoted` gates clients by the calling process's
+code-signing identifier, answering only the `com.apple.*` namespace. Measured
+on macOS 15.6 (24G84, arm64) with Chrome playing, by
+`tools/probe_mac_nowplaying.sh`:
 
 | | `GetNowPlayingInfo` | `IsPlaying` | `GetNowPlayingClient` |
 |---|---|---|---|
@@ -181,11 +184,20 @@ arm64) with Chrome playing, by `tools/probe_mac_nowplaying.sh`:
 | ad-hoc signed | `(null)` | no | no client |
 | ad-hoc + entitlement | SIGKILL at exec | SIGKILL | SIGKILL |
 
-All five symbols resolve, so the framework has not moved — the calls succeed
-and answer nothing. Claiming `com.apple.mediaremote.send-playback-commands` on
-an ad-hoc signature gets the process killed by the kernel before `main`: that
-entitlement is Apple's to grant. Re-run the probe on any Mac; it installs
-nothing.
+So a process gated by its own signature gets nothing — which is all the probe
+tested, and reading "nothing gets it" into that was wrong. The gate is on
+*who* calls, so it is beaten by calling from a process Apple already trusts:
+`/usr/bin/perl` is signed `com.apple.perl` and runs without library validation
+(`flags=0x0`), so it will `dlopen` an arbitrary unsigned dylib and then query
+`mediaremoted` with a trusted identity. That is the `mediaremote-adapter`
+technique and it does return the browser track.
+
+This build does not use it. It is private API reached through a code-signing
+loophole in a system binary — either half of which Apple can close in any
+release — and shipping that inside an auto-updating telemetry app on other
+people's machines is a different proposition from running it on your own. If
+taken, it belongs behind its own opt-in, off by default, degrading to the
+AppleScript path above when the loophole goes.
 
 `desktop.playing` is deliberately **not** `media.play`. Audible is broader than
 media: a ding, a call and a game all make sound, and folding them into

@@ -228,15 +228,32 @@ fn current() -> Result<Option<Now>, String> {
 /// ```
 ///
 /// All five symbols resolve, so the framework has not moved: the calls
-/// succeed and answer nothing. And claiming
-/// `com.apple.mediaremote.send-playback-commands` on an ad-hoc signature gets
-/// the process killed by the kernel before `main` -- that entitlement is
-/// Apple's to grant and it is not granted to us.
+/// succeed and answer nothing. Since 15.4 `mediaremoted` gates clients by the
+/// CALLING PROCESS'S code-signing identifier and answers only the `com.apple.*`
+/// namespace, so a binary signed with our own identity -- or none -- gets an
+/// empty dictionary, which is exactly what the table shows.
 ///
-/// So the browser track name is not obtainable on macOS, full stop, and this
-/// reaches the two apps that publish a scripting dictionary instead. Browser
-/// audio is not lost: `audible.rs` counts it through Core Audio as time an app
-/// spent making sound, without a title.
+/// WHAT THE PROBE DID NOT TEST, AND WHY THE EARLIER "FULL STOP" WAS WRONG.
+/// The gate is on the identity of the process that calls, not on the caller's
+/// entitlements -- so it is defeated not by signing our binary better but by
+/// making the call from a process Apple already trusts. `/usr/bin/perl` is
+/// signed `com.apple.perl` AND carries `flags=0x0` (no hardened runtime, so no
+/// library validation), which means it will `dlopen` an arbitrary unsigned
+/// dylib of ours and then talk to `mediaremoted` with a trusted identity. That
+/// is the `mediaremote-adapter` technique, and it does return the browser
+/// track. My probe only ever tested a process gated by its OWN signature, and
+/// I generalised "a normal app gets nothing" into "nothing gets it", which was
+/// wrong.
+///
+/// This build still does not use it: it is private API reached through a
+/// code-signing loophole in a system binary, either half of which Apple can
+/// close in any release, and shipping an OS exploit inside a
+/// telemetry-collecting app that auto-updates on other people's machines is a
+/// different proposition from running it on your own. If that trade is taken,
+/// it belongs behind its own opt-in, off by default, degrading to this
+/// AppleScript path when the loophole is gone -- not folded in here silently.
+/// Meanwhile `audible.rs` still counts browser audio through Core Audio as
+/// time an app spent making sound, without a title.
 #[cfg(target_os = "macos")]
 fn current() -> Result<Option<Now>, String> {
     const SCRIPT: &str = r#"on q(a)
