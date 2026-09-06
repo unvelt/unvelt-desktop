@@ -1,0 +1,19 @@
+[package]
+name = "unvelt-app"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.82"
+description = "The unvelt desktop app: a tray icon, a status window, and the collector running behind both."
+license = "UNLICENSED"
+publish = false
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# The collector, embedded rather than supervised as a sidecar. See the note at
+# the top of unvelt-agent's lib.rs for why.
+unvelt-agent = { path = "../unvelt-agent" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", features = ["tray-icon", "image-png"] }

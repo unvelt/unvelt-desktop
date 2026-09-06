@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/unvelt-agent"]
+members = ["crates/unvelt-agent", "crates/unvelt-app"]
 
 # One profile for the thing that actually ships. This is a process that runs
 # for weeks at a time on someone's laptop, so the trade is always toward a

@@ -11,7 +11,7 @@
 //! deterministic eids make retries free, and Ctrl-C flushes before exiting.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use crate::backend::Backend;
 use crate::client::ApiClient;
@@ -19,7 +19,7 @@ use crate::config::Config;
 use crate::envelope;
 use crate::handlers::{Handler, Tick};
 use crate::spool::Spool;
-use crate::VERSION;
+use crate::{Status, VERSION};
 
 pub struct Controller {
     cfg: Config,
@@ -29,6 +29,15 @@ pub struct Controller {
     backend: Box<dyn Backend>,
     last_run: Vec<i64>,
     stop: Arc<AtomicBool>,
+    /// Set while the user has paused collection from the tray. Distinct from
+    /// `stop`: paused keeps the process, the spool and the session alive and
+    /// simply stops asking the OS anything, so resuming costs nothing and the
+    /// gap is one the person chose.
+    paused: Arc<AtomicBool>,
+    /// What the UI is allowed to see. A snapshot published each cycle rather
+    /// than a handle to this struct, so no window can reach into a running
+    /// loop -- see the note on `Status`.
+    state: Arc<Mutex<Status>>,
 }
 
 impl Controller {
@@ -40,6 +49,21 @@ impl Controller {
         backend: Box<dyn Backend>,
     ) -> Self {
         let last_run = vec![0; handlers.len()];
+        let (files, bytes) = spool.stats();
+        let state = Status {
+            version: VERSION,
+            device_id: cfg.did.clone(),
+            host: cfg.host.clone(),
+            platform: cfg.osname,
+            signed_in: client.signed_in(),
+            endpoint: cfg.url.clone(),
+            spool_files: files,
+            spool_bytes: bytes,
+            last_tick_ms: None,
+            last_flush_ms: None,
+            events_spooled: 0,
+            collecting: true,
+        };
         Controller {
             cfg,
             client,
@@ -48,6 +72,25 @@ impl Controller {
             backend,
             last_run,
             stop: Arc::new(AtomicBool::new(false)),
+            paused: Arc::new(AtomicBool::new(false)),
+            state: Arc::new(Mutex::new(state)),
+        }
+    }
+
+    pub fn status_handle(&self) -> Arc<Mutex<Status>> {
+        self.state.clone()
+    }
+
+    pub fn pause_flag(&self) -> Arc<AtomicBool> {
+        self.paused.clone()
+    }
+
+    /// Publish the current snapshot. Never blocks the loop on a poisoned lock:
+    /// a status window that stops updating is a nuisance, a collector that
+    /// stops collecting is the failure this whole design is built to avoid.
+    fn publish(&self, f: impl FnOnce(&mut Status)) {
+        if let Ok(mut st) = self.state.lock() {
+            f(&mut st);
         }
     }
 
@@ -60,12 +103,21 @@ impl Controller {
     /// which is what makes the parity harness runnable in CI.
     pub fn tick_once(&mut self) {
         let now = crate::now_ms();
+        if self.paused.load(Ordering::Relaxed) {
+            self.publish(|st| {
+                st.collecting = false;
+                st.last_tick_ms = Some(now);
+            });
+            return;
+        }
         let idle = self.backend.idle();
         let fs = self.backend.fullscreen().unwrap_or(false);
         // Fullscreen means gaming or a film: present, not away, however long
         // it has been since the last keypress.
         let away = idle >= self.cfg.idle_sec && !fs;
 
+        let signed_in = self.client.signed_in();
+        let mut spooled = 0u64;
         for i in 0..self.handlers.len() {
             let interval_ms = (self.handlers[i].interval() * 1000.0) as i64;
             if now - self.last_run[i] < interval_ms {
@@ -93,7 +145,18 @@ impl Controller {
             for e in &events {
                 self.spool.append(e);
             }
+            spooled += events.len() as u64;
         }
+
+        let (files, bytes) = self.spool.stats();
+        self.publish(|st| {
+            st.collecting = true;
+            st.last_tick_ms = Some(now);
+            st.events_spooled += spooled;
+            st.spool_files = files;
+            st.spool_bytes = bytes;
+            st.signed_in = signed_in;
+        });
     }
 
     pub fn run(&mut self) {
@@ -148,6 +211,7 @@ impl Controller {
 
     pub fn flush(&self) {
         self.spool.rotate();
+        let started = crate::now_ms();
         for p in self.spool.ready() {
             let Ok(body) = std::fs::read(&p) else {
                 continue;
@@ -161,6 +225,12 @@ impl Controller {
             }
         }
         self.spool.enforce_cap(&self.cfg);
+        let (files, bytes) = self.spool.stats();
+        self.publish(|st| {
+            st.last_flush_ms = Some(started);
+            st.spool_files = files;
+            st.spool_bytes = bytes;
+        });
     }
 
     pub fn heartbeat(&self) {

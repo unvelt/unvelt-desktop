@@ -9,6 +9,10 @@
 
 use std::path::PathBuf;
 
+/// Clone because the collector thread and the UI both need a copy, and it is
+/// a handful of strings read once at startup -- cheaper to copy than to share
+/// behind a lock that would then have to be held during a probe.
+#[derive(Clone)]
 pub struct Config {
     pub uid: String,
     pub url: String,

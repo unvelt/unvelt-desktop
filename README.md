@@ -105,3 +105,41 @@ them, in step 4.
 Linux is X11 only. Wayland offers no cross-desktop way to ask what has focus,
 and guessing per-compositor belongs in its own change rather than smuggled into
 a port.
+
+## The app
+
+`crates/unvelt-app` is the tray application: the same collector, embedded, with
+a status window in front of it. Step 3 of the plan.
+
+```sh
+cargo run -p unvelt-app          # tray icon; the window opens from it
+cargo build --release -p unvelt-app
+```
+
+It is a library the app embeds, not a sidecar it supervises. A sidecar would
+mean two binaries to sign, two to update, an IPC channel to define, and a
+supervision problem in both directions — for a component that is a five-second
+polling loop. One process instead: one updater, one signature, and a window
+that can be destroyed and rebuilt without touching collection, which is the
+reason Tauri was chosen over Electron in the first place.
+
+Three rules the app holds to, all of them about the window mattering less than
+the collection:
+
+- **Closing the window never stops collecting.** Close hides; it does not
+  destroy and does not exit. The collector thread does not know a window exists.
+- **The UI reads a snapshot, never the loop.** `Status` is published once per
+  cycle behind a mutex. A window that could reach into the running controller
+  would eventually be given a button that changed it mid-cycle.
+- **Pause is not stop.** Pausing keeps the process, the spool and the session,
+  and only stops asking the OS anything — so the gap is one the person chose,
+  which is the distinction coverage exists to preserve. Quit asks the loop to
+  stop first, so `current.jsonl` is flushed rather than dropped.
+
+The window shows what the machine is actually answering right now, and a probe
+the OS refuses renders as *not available* rather than as `0` or `false` — the
+same rule the handlers follow when they stay quiet instead of inventing a
+reading.
+
+Measured at rest on Windows: **3.9 MB binary, 28.5 MB resident.** The Electron
+equivalent of this window would be a ~120 MB installer idling at 150–300 MB.

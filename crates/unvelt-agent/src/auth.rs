@@ -111,6 +111,56 @@ impl Session {
     }
 }
 
+impl Session {
+    /// The Firebase uid this session belongs to, read out of the ID token.
+    ///
+    /// Read rather than stored, so there is one source of truth and no second
+    /// file to fall out of step with the first. The signature is NOT verified
+    /// here and does not need to be: this token came from Google over TLS
+    /// minutes ago and is used only to label our own events. Everything that
+    /// matters is decided server-side, where the token IS verified — the
+    /// envelope's `uid` is advisory and ingest keys on the token subject.
+    pub fn uid(&mut self) -> Option<String> {
+        let tok = self.id_token()?;
+        let payload = tok.split('.').nth(1)?;
+        let json = b64url_decode(payload)?;
+        let v: serde_json::Value = serde_json::from_slice(&json).ok()?;
+        // Firebase puts it in `user_id`; `sub` carries the same value and is
+        // the standard claim, so accept either.
+        v.get("user_id")
+            .or_else(|| v.get("sub"))
+            .and_then(|x| x.as_str())
+            .map(str::to_string)
+    }
+}
+
+fn b64url_decode(s: &str) -> Option<Vec<u8>> {
+    let val = |c: u8| -> Option<u8> {
+        Some(match c {
+            b'A'..=b'Z' => c - b'A',
+            b'a'..=b'z' => c - b'a' + 26,
+            b'0'..=b'9' => c - b'0' + 52,
+            b'-' => 62,
+            b'_' => 63,
+            b'=' => return None,
+            _ => return None,
+        })
+    };
+    let mut out = Vec::with_capacity(s.len() * 3 / 4);
+    let mut acc = 0u32;
+    let mut bits = 0u32;
+    for c in s.bytes() {
+        let Some(v) = val(c) else { continue };
+        acc = (acc << 6) | v as u32;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((acc >> bits) as u8);
+        }
+    }
+    Some(out)
+}
+
 pub fn token_path(cfg: &Config) -> PathBuf {
     cfg.spool_dir
         .parent()
@@ -691,6 +741,27 @@ mod tests {
             b64url(&sha256(verifier.as_bytes())),
             "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
         );
+    }
+
+    #[test]
+    fn base64url_decodes_what_it_encodes_including_ragged_lengths() {
+        // JWT payloads are unpadded and almost never a multiple of three
+        // bytes, so the tail is where a decoder goes wrong.
+        for n in 0..40usize {
+            let data: Vec<u8> = (0..n).map(|i| (i * 37 + 11) as u8).collect();
+            let round = b64url_decode(&b64url(&data)).unwrap();
+            assert_eq!(round, data, "round trip failed at {n} bytes");
+        }
+    }
+
+    #[test]
+    fn a_uid_can_be_read_out_of_a_token_payload() {
+        // Not a real token: the middle segment is all that is read, and the
+        // signature is deliberately not checked here (see Session::uid).
+        let payload = b64url(br#"{"user_id":"IApcIBiNc5YXE4LRT2bz0MdtKs53","aud":"x"}"#);
+        let json = b64url_decode(&payload).unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&json).unwrap();
+        assert_eq!(v["user_id"], "IApcIBiNc5YXE4LRT2bz0MdtKs53");
     }
 
     #[test]

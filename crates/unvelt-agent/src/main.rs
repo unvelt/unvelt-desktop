@@ -1,4 +1,4 @@
-//! unvelt-agent — the headless desktop collector.
+//! unvelt-agent — the headless desktop collector, as a command line.
 //!
 //!     unvelt-agent --login      sign in once on this machine
 //!     unvelt-agent              run the loop until interrupted
@@ -6,34 +6,12 @@
 //!     unvelt-agent --probe      print every backend probe once and exit
 //!     unvelt-agent --version
 //!
-//! This is step 2 of the desktop build order: parity with the Python collector,
-//! nothing new. The five handlers, the envelope, the spool format, the eids and
-//! the HTTP contract are all ports rather than redesigns, and the acceptance
-//! test is a week of side-by-side capture producing the same events. The tray,
-//! the consent UI and the auth flow arrive in step 3; notifications and media
-//! in step 4.
-//!
-//! The one intentional behaviour change is the app identifier on macOS, which
-//! migration 0015 requires and which is documented in `backend/unix.rs`.
+//! Everything here is argument parsing and printing. The collector itself is
+//! the library beside this file, so the tray app runs exactly the same code
+//! rather than a second implementation of it — and so this CLI keeps working
+//! as the thing to reach for when the window is the part that is broken.
 
-mod auth;
-mod backend;
-mod client;
-mod config;
-mod controller;
-mod envelope;
-mod handlers;
-mod spool;
-
-pub const VERSION: &str = env!("CARGO_PKG_VERSION");
-
-/// Milliseconds since the Unix epoch.
-pub fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0)
-}
+use unvelt_agent::{auth, backend, client, config, controller, envelope, handlers, spool, VERSION};
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -159,28 +137,31 @@ fn short(id: &str) -> String {
 /// answers "which of these does this OS actually let us see" in one line each,
 /// which is the question the whole design turns on.
 fn probe(cfg: &config::Config) {
-    let mut b = backend::make_backend(cfg);
+    let p = unvelt_agent::probe_once(cfg);
     println!("unvelt-agent {VERSION} on {} ({})", cfg.osname, cfg.host);
     println!("  did          {}", cfg.did);
     println!("  spool        {}", cfg.spool_dir.display());
-    match b.frontmost() {
-        Some(f) => println!(
-            "  frontmost    pkg={:?} label={:?} title={:?}",
-            f.pkg, f.label, f.title
+    match (&p.app, &p.title) {
+        (None, _) => println!("  frontmost    (none)"),
+        (Some(a), t) => println!(
+            "  frontmost    pkg={a:?} title={:?}",
+            t.as_deref().unwrap_or("")
         ),
-        None => println!("  frontmost    (none)"),
     }
-    println!("  idle         {:.1}s", b.idle());
-    println!("  fullscreen   {:?}", b.fullscreen());
-    println!("  locked       {:?}", b.locked());
-    println!("  monitors     {:?}", b.monitors());
-    println!("  ssid         {:?}", b.ssid());
-    println!("  net          {:?}", b.net());
-    match b.power() {
-        Some(p) => println!("  power        ac={} pct={:?}", p.ac, p.pct),
-        None => println!("  power        (none)"),
+    println!("  idle         {:.1}s", p.idle_s);
+    println!("  fullscreen   {:?}", p.fullscreen);
+    println!("  locked       {:?}", p.locked);
+    println!("  monitors     {:?}", p.monitors);
+    println!("  ssid         {:?}", p.ssid);
+    println!("  net          {:?}", p.net);
+    match (p.ac, p.battery_pct) {
+        (None, None) => println!("  power        (none)"),
+        (ac, pct) => println!("  power        ac={ac:?} pct={pct:?}"),
     }
-    println!("  tz offset    {} min", envelope::tz_min(now_ms()));
+    println!(
+        "  tz offset    {} min",
+        envelope::tz_min(unvelt_agent::now_ms())
+    );
     println!(
         "  signed in    {}",
         if auth::Session::load(cfg).is_some() {
