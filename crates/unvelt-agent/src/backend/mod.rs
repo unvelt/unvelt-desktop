@@ -127,40 +127,6 @@ pub fn run(prog: &str, args: &[&str]) -> String {
     }
 }
 
-/// One DWORD from HKEY_CURRENT_USER, or `None` if it is not there.
-///
-/// Small enough to live here rather than growing a registry module: two
-/// handlers want one value each, and a shared helper beats a second copy of
-/// the Win32 dance.
-#[cfg(windows)]
-pub fn reg_dword(path: &str, name: &str) -> Option<u32> {
-    use windows_sys::Win32::Foundation::ERROR_SUCCESS;
-    use windows_sys::Win32::System::Registry::{
-        RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY, HKEY_CURRENT_USER, KEY_READ,
-    };
-    let wide = |s: &str| -> Vec<u16> { s.encode_utf16().chain(std::iter::once(0)).collect() };
-    unsafe {
-        let mut h: HKEY = std::ptr::null_mut();
-        if RegOpenKeyExW(HKEY_CURRENT_USER, wide(path).as_ptr(), 0, KEY_READ, &mut h)
-            != ERROR_SUCCESS
-        {
-            return None;
-        }
-        let mut v = 0u32;
-        let mut size = 4u32;
-        let st = RegQueryValueExW(
-            h,
-            wide(name).as_ptr(),
-            std::ptr::null(),
-            std::ptr::null_mut(),
-            &mut v as *mut _ as *mut u8,
-            &mut size,
-        );
-        RegCloseKey(h);
-        (st == ERROR_SUCCESS).then_some(v)
-    }
-}
-
 #[cfg(windows)]
 mod windows;
 #[cfg(windows)]

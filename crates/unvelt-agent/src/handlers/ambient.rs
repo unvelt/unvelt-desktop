@@ -24,7 +24,7 @@ use crate::envelope::Event;
 pub struct AmbientHandler {
     interval: f64,
     last_route: Option<(String, Option<String>)>,
-    last_dnd: Option<bool>,
+    last_dnd: Option<String>,
 }
 
 impl AmbientHandler {
@@ -76,15 +76,18 @@ impl Handler for AmbientHandler {
             }
         }
 
-        if let Some(on) = do_not_disturb() {
-            if self.last_dnd != Some(on) {
-                self.last_dnd = Some(on);
+        if let Some((on, mode)) = dnd_state() {
+            // Keyed on the pair, not just `on`: moving from a fullscreen game
+            // to an explicit Do Not Disturb is a real change even though
+            // notifications were suppressed throughout.
+            if self.last_dnd.as_deref() != Some(mode) {
+                self.last_dnd = Some(mode.to_string());
                 out.push(tick.event(
                     "desktop",
                     "dnd",
                     tick.now,
-                    format!("dt:{}:dnd:{}:{}", tick.cfg.did, on as u8, tick.now),
-                    Some(serde_json::json!({ "on": on as u8 })),
+                    format!("dt:{}:dnd:{mode}:{}", tick.cfg.did, tick.now),
+                    Some(serde_json::json!({ "on": on as u8, "mode": mode })),
                 ));
             }
         }
@@ -110,29 +113,46 @@ fn output_route() -> Option<(&'static str, Option<String>)> {
 /// `None` when the platform will not say. Not `Some(false)`: "not silenced"
 /// and "we cannot tell" are different claims, and only one of them should
 /// reach a dataset that exists to be honest about what it saw.
+/// `SHQueryUserNotificationState` — the documented question, asked directly.
+///
+/// The first attempt read a registry value, and testing killed it: turning Do
+/// Not Disturb on wrote nothing there. Windows 11 keeps the state in CloudStore
+/// blobs whose shape is undocumented and changes between builds, which is
+/// exactly the kind of thing this file should not be parsing.
+///
+/// This call is what the shell itself uses to decide whether to show a toast,
+/// and it distinguishes the reasons. That matters: a quiet hour because the
+/// person asked for one and a quiet hour because a game was fullscreen are
+/// different facts about the day, and `mode` keeps them apart instead of
+/// flattening both into "silenced".
 #[cfg(windows)]
-fn do_not_disturb() -> Option<bool> {
-    // Windows records the global toast switch here. Focus Assist has its own,
-    // messier home under CloudStore that changes shape between builds; this
-    // key is the one that has been stable and it answers the question that
-    // matters -- were toasts allowed through at all.
-    //
-    // The value only exists once somebody has changed the setting, so on a
-    // machine that never touched it this returns None and no `desktop.dnd`
-    // event is ever emitted. That is deliberate. The default IS toasts-on, so
-    // `Some(false)` would usually be right -- but "usually right" is an
-    // inference about Windows rather than an observation of this machine, and
-    // absence is never evidence here. The signal appears the first time the
-    // setting is touched, and until then the digest correctly has nothing.
-    let v = crate::backend::reg_dword(
-        "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Notifications\\Settings",
-        "NOC_GLOBAL_SETTING_TOASTS_ENABLED",
-    )?;
-    Some(v == 0)
+fn dnd_state() -> Option<(bool, &'static str)> {
+    use windows_sys::Win32::UI::Shell::SHQueryUserNotificationState;
+    let mut state = 0i32;
+    let hr = unsafe { SHQueryUserNotificationState(&mut state) };
+    if hr < 0 {
+        return None;
+    }
+    // QUNS_*, from ShellAPI.h.
+    match state {
+        1 => None,                           // NOT_PRESENT: no shell yet
+        2 => Some((true, "busy")),           // BUSY
+        3 => Some((true, "fullscreen")),     // RUNNING_D3D_FULL_SCREEN
+        4 => Some((true, "presentation")),   // PRESENTATION_MODE
+        5 => Some((false, "on")),            // ACCEPTS_NOTIFICATIONS
+        6 => Some((true, "quiet_time")),     // QUIET_TIME -- Do Not Disturb
+        7 => Some((true, "app_fullscreen")), // APP: a fullscreen app
+        _ => None,
+    }
+}
+
+#[cfg(not(windows))]
+fn dnd_state() -> Option<(bool, &'static str)> {
+    do_not_disturb_unix().map(|on| (on, if on { "quiet_time" } else { "on" }))
 }
 
 #[cfg(target_os = "macos")]
-fn do_not_disturb() -> Option<bool> {
+fn do_not_disturb_unix() -> Option<bool> {
     // Focus modes write an assertion file while one is active. Reading it is
     // cheap and needs no permission; parsing it properly would mean a plist
     // reader, and the only question here is whether any assertion is live.
@@ -143,7 +163,7 @@ fn do_not_disturb() -> Option<bool> {
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
-fn do_not_disturb() -> Option<bool> {
+fn do_not_disturb_unix() -> Option<bool> {
     // Desktop-environment specific and not written.
     None
 }
