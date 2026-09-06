@@ -1,0 +1,173 @@
+//! Configuration, read from the environment exactly as the Python collector
+//! reads it, so the two can be pointed at the same server with the same setup.
+//!
+//! One deliberate difference: `did`. During the parity window both collectors
+//! run on the same machine, and identical `did` plus identical `eid` means the
+//! server dedupes one against the other and the diff comes back empty for the
+//! wrong reason. `UNVELT_DID_SUFFIX` (default `-rs`) keeps them apart, and is
+//! set to the empty string when this agent takes over for real.
+
+use std::path::PathBuf;
+
+pub struct Config {
+    pub uid: String,
+    pub url: String,
+    pub key: String,
+    pub host: String,
+    pub osname: &'static str,
+    pub did: String,
+
+    pub sample_sec: u64,
+    pub idle_sec: f64,
+    pub resample_sec: u64,
+    pub input_window_sec: u64,
+    pub context_sec: u64,
+    /// Only the macOS SSID path reads this -- its fallback can cost ~4s -- so
+    /// on Windows it is genuinely unused rather than merely unused today.
+    #[cfg_attr(windows, allow(dead_code))]
+    pub ssid_sec: u64,
+    pub flush_sec: u64,
+    pub hb_sec: u64,
+
+    pub spool_dir: PathBuf,
+    pub spool_max_bytes: u64,
+    pub debug: bool,
+}
+
+fn env_str(key: &str, default: &str) -> String {
+    std::env::var(key)
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| default.to_string())
+}
+
+fn env_num<T: std::str::FromStr>(key: &str, default: T) -> T {
+    std::env::var(key)
+        .ok()
+        .and_then(|v| v.trim().parse().ok())
+        .unwrap_or(default)
+}
+
+fn env_flag(key: &str) -> bool {
+    !matches!(
+        env_str(key, "").to_ascii_lowercase().as_str(),
+        "" | "0" | "false" | "no"
+    )
+}
+
+pub const OSNAME: &str = if cfg!(target_os = "windows") {
+    "win"
+} else if cfg!(target_os = "macos") {
+    "mac"
+} else {
+    "linux"
+};
+
+impl Config {
+    pub fn from_env() -> Self {
+        let host = hostname();
+        let osname: &'static str = OSNAME;
+        // Same default shape as compound/config.py: "<os>-<hostname>".
+        let base_did = env_str("UNVELT_DID", &format!("{osname}-{host}"));
+        let did = format!("{base_did}{}", env_str("UNVELT_DID_SUFFIX", "-rs"));
+
+        Config {
+            uid: env_str("UNVELT_UID", ""),
+            url: env_str("UNVELT_URL", "https://compound-kx.duckdns.org")
+                .trim_end_matches('/')
+                .to_string(),
+            key: env_str("UNVELT_INGEST_KEY", ""),
+            host,
+            osname,
+            did,
+
+            sample_sec: env_num("UNVELT_SAMPLE_SEC", 5),
+            idle_sec: env_num("UNVELT_IDLE_SEC", 180.0),
+            resample_sec: env_num("UNVELT_RESAMPLE_SEC", 120),
+            input_window_sec: env_num("UNVELT_INPUT_WINDOW_SEC", 60),
+            context_sec: env_num("UNVELT_CONTEXT_SEC", 60),
+            // macOS SSID can fall through to a ~4s system_profiler call, so it
+            // is refreshed on its own much slower clock.
+            ssid_sec: env_num("UNVELT_SSID_SEC", 900),
+            flush_sec: env_num("UNVELT_FLUSH_SEC", 60),
+            hb_sec: env_num("UNVELT_HB_SEC", 300),
+
+            spool_dir: spool_dir(),
+            spool_max_bytes: env_num("UNVELT_SPOOL_MAX_BYTES", 64 * 1024 * 1024),
+            debug: env_flag("UNVELT_DEBUG"),
+        }
+    }
+
+    #[cfg(test)]
+    pub fn for_test() -> Self {
+        let mut c = Config::from_env();
+        c.uid = "test".into();
+        c.did = "test".into();
+        c
+    }
+}
+
+fn hostname() -> String {
+    // The short name, matching Python's socket.gethostname().split(".")[0].
+    let raw = std::env::var("COMPUTERNAME")
+        .or_else(|_| std::env::var("HOSTNAME"))
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(read_hostname_fallback);
+    raw.split('.').next().unwrap_or("unknown").to_string()
+}
+
+#[cfg(windows)]
+fn read_hostname_fallback() -> String {
+    "unknown".into()
+}
+
+#[cfg(not(windows))]
+fn read_hostname_fallback() -> String {
+    // COMPUTERNAME/HOSTNAME are often unset for a launchd or systemd service,
+    // which is exactly how this runs in production, so the syscall is the
+    // normal path here rather than a fallback.
+    let mut buf = [0i8; 256];
+    extern "C" {
+        fn gethostname(name: *mut i8, len: usize) -> i32;
+    }
+    unsafe {
+        if gethostname(buf.as_mut_ptr(), buf.len()) != 0 {
+            return "unknown".into();
+        }
+        let bytes: Vec<u8> = buf
+            .iter()
+            .take_while(|&&c| c != 0)
+            .map(|&c| c as u8)
+            .collect();
+        String::from_utf8_lossy(&bytes).to_string()
+    }
+}
+
+fn spool_dir() -> PathBuf {
+    if let Ok(d) = std::env::var("UNVELT_SPOOL_DIR") {
+        if !d.trim().is_empty() {
+            return PathBuf::from(d);
+        }
+    }
+    let base = if cfg!(windows) {
+        std::env::var("LOCALAPPDATA").ok().map(PathBuf::from)
+    } else if cfg!(target_os = "macos") {
+        std::env::var("HOME")
+            .ok()
+            .map(|h| PathBuf::from(h).join("Library").join("Application Support"))
+    } else {
+        std::env::var("XDG_STATE_HOME")
+            .ok()
+            .map(PathBuf::from)
+            .or_else(|| {
+                std::env::var("HOME")
+                    .ok()
+                    .map(|h| PathBuf::from(h).join(".local").join("state"))
+            })
+    };
+    base.unwrap_or_else(std::env::temp_dir)
+        .join("unvelt")
+        .join("spool")
+}

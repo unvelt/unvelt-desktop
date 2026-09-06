@@ -1,0 +1,219 @@
+//! The durable heart of the collector.
+//!
+//! Owns the loop clock and the shared per-cycle snapshot; reads the cheap
+//! global signals once (idle, fullscreen) and hands each handler a `Tick`;
+//! spools whatever they emit; flushes on a cadence; heartbeats; and — because
+//! it owns the clock — it is the thing that can notice the machine slept. A
+//! wall-clock jump between cycles becomes an explicit `meta.gap`, so a blind
+//! window is never silent.
+//!
+//! Durability: the spool is the source of truth and survives a crash,
+//! deterministic eids make retries free, and Ctrl-C flushes before exiting.
+
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+
+use crate::backend::Backend;
+use crate::client::ApiClient;
+use crate::config::Config;
+use crate::envelope;
+use crate::handlers::{Handler, Tick};
+use crate::spool::Spool;
+use crate::VERSION;
+
+pub struct Controller {
+    cfg: Config,
+    client: ApiClient,
+    spool: Spool,
+    handlers: Vec<Box<dyn Handler>>,
+    backend: Box<dyn Backend>,
+    last_run: Vec<i64>,
+    stop: Arc<AtomicBool>,
+}
+
+impl Controller {
+    pub fn new(
+        cfg: Config,
+        client: ApiClient,
+        spool: Spool,
+        handlers: Vec<Box<dyn Handler>>,
+        backend: Box<dyn Backend>,
+    ) -> Self {
+        let last_run = vec![0; handlers.len()];
+        Controller {
+            cfg,
+            client,
+            spool,
+            handlers,
+            backend,
+            last_run,
+            stop: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    pub fn stop_flag(&self) -> Arc<AtomicBool> {
+        self.stop.clone()
+    }
+
+    /// One cycle of the loop. Split out so `--once` can exercise the whole
+    /// path -- probes, handlers, spool -- without a long-running process,
+    /// which is what makes the parity harness runnable in CI.
+    pub fn tick_once(&mut self) {
+        let now = crate::now_ms();
+        let idle = self.backend.idle();
+        let fs = self.backend.fullscreen().unwrap_or(false);
+        // Fullscreen means gaming or a film: present, not away, however long
+        // it has been since the last keypress.
+        let away = idle >= self.cfg.idle_sec && !fs;
+
+        for i in 0..self.handlers.len() {
+            let interval_ms = (self.handlers[i].interval() * 1000.0) as i64;
+            if now - self.last_run[i] < interval_ms {
+                continue;
+            }
+            self.last_run[i] = now;
+            let events = {
+                let mut tick = Tick {
+                    cfg: &self.cfg,
+                    now,
+                    idle,
+                    away,
+                    backend: self.backend.as_mut(),
+                };
+                self.handlers[i].poll(&mut tick)
+            };
+            if self.cfg.debug && !events.is_empty() {
+                eprintln!(
+                    "tick {} -> {} event(s) from {}",
+                    now,
+                    events.len(),
+                    self.handlers[i].name()
+                );
+            }
+            for e in &events {
+                self.spool.append(e);
+            }
+        }
+    }
+
+    pub fn run(&mut self) {
+        let now = crate::now_ms();
+        let start = envelope::build(
+            &self.cfg,
+            "meta",
+            "start",
+            now,
+            format!("meta:start:{}:{}", self.cfg.did, now),
+            Some(serde_json::json!({
+                "ver": VERSION,
+                "os": self.cfg.osname,
+                "host": self.cfg.host,
+            })),
+        );
+        self.spool.append(&start);
+
+        let base = self.cfg.sample_sec;
+        // Three missed ticks, floored at 30s. Below that a slow probe on a
+        // loaded machine would report itself as a sleep.
+        let gap_ms = std::cmp::max(30_000, base as i64 * 3 * 1000);
+        let mut last_tick = now;
+        let mut last_flush = now;
+        let mut last_hb: i64 = 0;
+
+        while !self.stop.load(Ordering::Relaxed) {
+            let now = crate::now_ms();
+            if now - last_tick > gap_ms {
+                // The clock jumped: the machine was asleep or off. Saying so is
+                // what keeps "we were not looking" from reading as "nothing
+                // happened" in coverage.
+                self.spool
+                    .gap(&self.cfg, "desktop", last_tick, now, "sleep_or_off");
+            }
+            last_tick = now;
+
+            self.tick_once();
+
+            if now - last_flush >= self.cfg.flush_sec as i64 * 1000 {
+                self.flush();
+                last_flush = now;
+            }
+            if now - last_hb >= self.cfg.hb_sec as i64 * 1000 {
+                self.heartbeat();
+                last_hb = now;
+            }
+            self.interruptible_sleep(base);
+        }
+        self.flush();
+    }
+
+    pub fn flush(&self) {
+        self.spool.rotate();
+        for p in self.spool.ready() {
+            let Ok(body) = std::fs::read(&p) else {
+                continue;
+            };
+            if self.client.post_events(&body) {
+                let _ = std::fs::remove_file(&p);
+            } else {
+                // Keep order: a later batch must not overtake an earlier one,
+                // so a failure stops the drain rather than skipping past it.
+                break;
+            }
+        }
+        self.spool.enforce_cap(&self.cfg);
+    }
+
+    pub fn heartbeat(&self) {
+        let (nfiles, nbytes) = self.spool.stats();
+        let hb = serde_json::json!({
+            "uid": self.cfg.uid,
+            "did": self.cfg.did,
+            "ts": crate::now_ms(),
+            "ver": VERSION,
+            "spool_files": nfiles,
+            "spool_bytes": nbytes,
+            "srcs": ["desktop"],
+            "dev": {
+                "model": self.cfg.host,
+                // `mfr` is how ingest tells a laptop from a phone: platform_of()
+                // reads it first and exactly, so it must stay one of
+                // win | mac | linux.
+                "mfr": self.cfg.osname,
+                "rel": os_release(),
+            },
+        });
+        self.client.post_heartbeat(&hb);
+    }
+
+    fn interruptible_sleep(&self, seconds: u64) {
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(seconds);
+        while !self.stop.load(Ordering::Relaxed) && std::time::Instant::now() < end {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+    }
+}
+
+/// A human-readable OS version, the equivalent of Python's platform.platform().
+/// Ingest stores it as `core.devices.os_version` and falls back to reading its
+/// prefix when the heartbeat carries no `mfr`, so the leading word matters.
+fn os_release() -> String {
+    #[cfg(windows)]
+    {
+        let out = crate::backend::run("cmd", &["/c", "ver"]);
+        let t = out.trim();
+        if !t.is_empty() {
+            return t.to_string();
+        }
+        "Windows".to_string()
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let v = crate::backend::run("sw_vers", &["-productVersion"]);
+        format!("macOS-{}", v.trim())
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let v = crate::backend::run("uname", &["-r"]);
+        format!("Linux-{}", v.trim())
+    }
+}

@@ -1,0 +1,54 @@
+name: build
+
+# Three platforms from one source tree, which is the claim the desktop plan
+# makes and this is what keeps it true. Windows is developed on and tested
+# locally; macOS and Linux are compiled nowhere else, so a `cfg` that only
+# builds on the author's machine has to fail here rather than at release time.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test --all
+      # The probe is the honest smoke test: it exercises every backend call on
+      # a real machine of that OS. A CI runner has no logged-in desktop, so it
+      # must not FAIL -- but it must not hang or crash either, which is what
+      # this actually checks.
+      - name: probe (must not crash)
+        run: cargo run -- --probe
+        timeout-minutes: 3
+      - run: cargo build --release --target ${{ matrix.target }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: unvelt-agent-${{ matrix.target }}
+          path: |
+            target/${{ matrix.target }}/release/unvelt-agent
+            target/${{ matrix.target }}/release/unvelt-agent.exe
+          if-no-files-found: error

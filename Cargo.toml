@@ -1,0 +1,14 @@
+[workspace]
+resolver = "2"
+members = ["crates/unvelt-agent"]
+
+# One profile for the thing that actually ships. This is a process that runs
+# for weeks at a time on someone's laptop, so the trade is always toward a
+# smaller, quieter binary rather than a faster one -- it spends almost all of
+# its life asleep between five-second ticks.
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

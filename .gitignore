@@ -1,0 +1,11 @@
+/target
+**/*.rs.bk
+
+# The spool is a participant's own event stream. It must never reach a
+# repository, and it lands in the working tree only when UNVELT_SPOOL_DIR is
+# pointed here for a local test.
+*.jsonl
+spool/
+
+.DS_Store
+Thumbs.db
