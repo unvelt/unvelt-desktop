@@ -47,16 +47,21 @@ pub struct Source {
 /// Keyed by handler name, so the controller can gate on it directly.
 ///
 /// The last field is whether it is on when nobody has said otherwise, and the
-/// two that are off matter more than the five that are on.
+/// three that are off matter more than the five that are on.
 ///
-/// On Android, notifications and media sit behind an OS permission the person
-/// grants by hand. On Windows they sit behind nothing: the notification store
-/// is a readable file and SMTC answers any process that asks. So an update
-/// shipping them on by default would start collecting who interrupts you and
-/// what you listen to without anyone agreeing to it — and without the OS
-/// asking on our behalf either. When the platform declines to put the
-/// question, this switch is the only place it gets put. So it gets put, and
-/// the answer starts at no.
+/// The platforms disagree about whether they ask, which is exactly why the
+/// default cannot depend on the platform. Android gates notifications and
+/// media behind a permission granted by hand, and macOS gates the notification
+/// store behind Full Disk Access. Windows gates none of the three: the
+/// notification store is a readable file, SMTC answers any process that asks,
+/// and the camera/microphone consent store is an ordinary registry key.
+///
+/// So on Windows an update shipping these on would start collecting who
+/// interrupts you, what you listen to and when you are on a call -- with
+/// nobody having agreed and the OS never asking on our behalf. When the
+/// platform declines to put the question, this switch is the only place it
+/// gets put. And a signal that is opt-in on one machine and automatic on
+/// another is not a decision anybody made, so it is off on all of them.
 pub const CATALOGUE: &[(&str, &str, &str, &str, bool)] = &[
     (
         "focus",
@@ -112,6 +117,18 @@ pub const CATALOGUE: &[(&str, &str, &str, &str, bool)] = &[
         false,
     ),
     (
+        "capture",
+        "Camera and microphone",
+        "When you were in a call. Two hours on a call produces almost no \
+         typing, so every other signal reads it as two hours away from the \
+         machine — this is the only one that can say otherwise.",
+        "Whether the camera or microphone was live, and which app had it. It \
+         never opens either one: it reads the record Windows already keeps of \
+         what other apps did, which is the same list the Settings app shows \
+         you. Never what was said, never what was seen.",
+        false,
+    ),
+    (
         "media",
         "Music and video",
         "What you listened to and for how long, and what was playing while \
@@ -129,22 +146,13 @@ pub const CATALOGUE: &[(&str, &str, &str, &str, bool)] = &[
 /// screen that lists only today's five signals lets someone agree to unvelt
 /// without knowing what unvelt is going to become. Saying "not yet" is how
 /// the screen stays true in both directions.
-pub const PLANNED: &[(&str, &str, &str)] = &[
-    (
-        "Notification content",
-        "What an interruption was actually about, for the handful of apps \
+pub const PLANNED: &[(&str, &str, &str)] = &[(
+    "Notification content",
+    "What an interruption was actually about, for the handful of apps \
          where that matters to you.",
-        "The title and body of notifications, and only from apps you add one \
+    "The title and body of notifications, and only from apps you add one \
          at a time. The list starts empty and nothing is added to it for you.",
-    ),
-    (
-        "Camera and microphone",
-        "When you were in a call. Two hours on a call looks like two hours away \
-         from the keyboard, and this is the only thing that can say otherwise.",
-        "Whether the camera or microphone was live, and which app had it. Never \
-         what was said, never what was seen.",
-    ),
-];
+)];
 
 #[derive(Clone)]
 pub struct Toggles {

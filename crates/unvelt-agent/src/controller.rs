@@ -210,11 +210,42 @@ impl Controller {
         while !self.stop.load(Ordering::Relaxed) {
             let now = crate::now_ms();
             if now - last_tick > gap_ms {
-                // The clock jumped: the machine was asleep or off. Saying so is
-                // what keeps "we were not looking" from reading as "nothing
-                // happened" in coverage.
+                // The clock jumped: the machine was asleep or off.
+                //
+                // Two records, because they answer different questions. The
+                // `meta.gap` tells coverage we were not looking, which keeps a
+                // dark stretch from reading as "nothing happened". The
+                // sleep/wake pair tells the digest WHY, which is a fact about
+                // the person's day rather than about the collector -- a closed
+                // lid is a finding, a dead process is a defect, and absence
+                // alone cannot tell them apart.
+                //
+                // Derived from the clock rather than from a power event, and
+                // that is deliberate: this works identically on all three
+                // platforms and cannot miss a wake that the OS forgot to
+                // announce. The cost is that it cannot distinguish a lid from
+                // a shutdown, so `why` says exactly what was observed.
                 self.spool
                     .gap(&self.cfg, "desktop", last_tick, now, "sleep_or_off");
+                let asleep = (now - last_tick) / 1000;
+                for (et, ts, extra) in [
+                    ("sleep", last_tick, serde_json::json!({"why": "clock_jump"})),
+                    (
+                        "wake",
+                        now,
+                        serde_json::json!({"why": "clock_jump", "after_s": asleep}),
+                    ),
+                ] {
+                    let e = envelope::build(
+                        &self.cfg,
+                        "desktop",
+                        et,
+                        ts,
+                        format!("dt:{}:{et}:{ts}", self.cfg.did),
+                        Some(extra),
+                    );
+                    self.spool.append(&e);
+                }
             }
             last_tick = now;
 

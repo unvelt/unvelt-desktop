@@ -133,6 +133,8 @@ built there and nowhere else — the development machine is Windows, and a
 | fullscreen | yes | — | — |
 | notifications | yes (`wpndatabase.db`) | planned (`usernoted`) | — |
 | media | yes (SMTC) | planned (3 layers) | planned (MPRIS2) |
+| camera / mic | yes (consent store) | — | — |
+| sleep / wake | yes | yes | yes |
 
 Notifications and media are **off until you turn them on**. On Android both sit
 behind an OS permission granted by hand; on Windows they sit behind nothing —

@@ -45,6 +45,7 @@ pub trait Handler {
 }
 
 mod activity;
+mod capture;
 mod focus;
 mod location;
 mod media;
@@ -54,6 +55,7 @@ mod power;
 mod session;
 
 pub use activity::ActivityHandler;
+pub use capture::CaptureHandler;
 pub use focus::FocusHandler;
 pub use location::LocationHandler;
 pub use media::{probe as media_probe, MediaHandler, Now as NowPlaying};
@@ -84,5 +86,6 @@ pub fn build_default(cfg: &Config) -> Vec<Box<dyn Handler>> {
         #[cfg(target_os = "macos")]
         Box::new(MacNotifHandler::new(cfg)),
         Box::new(MediaHandler::new(cfg)),
+        Box::new(CaptureHandler::new(cfg)),
     ]
 }
