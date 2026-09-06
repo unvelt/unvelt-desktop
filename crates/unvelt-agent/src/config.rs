@@ -80,6 +80,10 @@ fn env_flag(key: &str) -> bool {
 /// truncated key fails at Firebase sign-in with an error that blames the
 /// request rather than the key. A wrong constant that looks right is worth one
 /// assertion.
+/// Where events go. The POC's duckdns VM is retired: it only answers 401 now,
+/// because the shared-key gate it used was replaced by real token auth.
+const DEFAULT_URL: &str = "https://compound-ingest-nexyqgrgbq-el.a.run.app";
+
 const DEFAULT_API_KEY: &str = "AIzaSyC2KeGrmf35qT1z21CP72EEp9TNuaL77eg";
 
 pub const OSNAME: &str = if cfg!(target_os = "windows") {
@@ -107,7 +111,7 @@ impl Config {
 
         Config {
             uid: env_str("UNVELT_UID", ""),
-            url: env_str("UNVELT_URL", "https://compound-kx.duckdns.org")
+            url: env_str("UNVELT_URL", DEFAULT_URL)
                 .trim_end_matches('/')
                 .to_string(),
             key: env_str("UNVELT_INGEST_KEY", ""),

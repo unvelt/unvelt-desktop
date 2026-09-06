@@ -139,7 +139,7 @@ mod tests {
     fn cfg() -> Config {
         let mut c = Config::for_test();
         c.uid = "u1".into();
-        c.did = "win-MSI".into();
+        c.did = "win-testhost".into();
         c
     }
 
@@ -150,7 +150,7 @@ mod tests {
             "desktop",
             "focus",
             1_757_000_000_000,
-            "dt:win-MSI:focus:1757000000000".into(),
+            "dt:win-testhost:focus:1757000000000".into(),
             Some(serde_json::json!({"app": "chrome"})),
         );
         let s = dumps(&e);
@@ -159,9 +159,11 @@ mod tests {
         // machine's zone. Payload key order is deliberately not asserted --
         // see the module docstring.
         assert!(s.starts_with(
-            r#"{"uid":"u1","did":"win-MSI","src":"desktop","et":"focus","ts":1757000000000,"tz":"#
+            r#"{"uid":"u1","did":"win-testhost","src":"desktop","et":"focus","ts":1757000000000,"tz":"#
         ));
-        assert!(s.ends_with(r#","eid":"dt:win-MSI:focus:1757000000000","p":{"app":"chrome"}}"#));
+        assert!(
+            s.ends_with(r#","eid":"dt:win-testhost:focus:1757000000000","p":{"app":"chrome"}}"#)
+        );
         assert!(!s.contains(", "), "must be compact, not pretty");
     }
 

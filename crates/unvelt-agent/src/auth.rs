@@ -765,10 +765,10 @@ mod tests {
     fn a_uid_can_be_read_out_of_a_token_payload() {
         // Not a real token: the middle segment is all that is read, and the
         // signature is deliberately not checked here (see Session::uid).
-        let payload = b64url(br#"{"user_id":"IApcIBiNc5YXE4LRT2bz0MdtKs53","aud":"x"}"#);
+        let payload = b64url(br#"{"user_id":"tEsTuID000000000000000000000","aud":"x"}"#);
         let json = b64url_decode(&payload).unwrap();
         let v: serde_json::Value = serde_json::from_slice(&json).unwrap();
-        assert_eq!(v["user_id"], "IApcIBiNc5YXE4LRT2bz0MdtKs53");
+        assert_eq!(v["user_id"], "tEsTuID000000000000000000000");
     }
 
     #[test]

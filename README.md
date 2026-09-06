@@ -40,7 +40,7 @@ Environment only, and the defaults are the Python collector's.
 | variable | default | |
 |---|---|---|
 | `UNVELT_UID` | — | **required**; the agent refuses to collect without it |
-| `UNVELT_URL` | `https://compound-kx.duckdns.org` | |
+| `UNVELT_URL` | the ingest service | |
 | `UNVELT_INGEST_KEY` | — | sent as `X-Compound-Key` |
 | `UNVELT_DID` | `<os>-<hostname>` | |
 | `UNVELT_DID_SUFFIX` | *(empty)* | see below |
