@@ -1,5 +1,6 @@
 //! unvelt-agent — the headless desktop collector.
 //!
+//!     unvelt-agent --login      sign in once on this machine
 //!     unvelt-agent              run the loop until interrupted
 //!     unvelt-agent --once       one cycle, spool it, exit (parity harness)
 //!     unvelt-agent --probe      print every backend probe once and exit
@@ -15,6 +16,7 @@
 //! The one intentional behaviour change is the app identifier on macOS, which
 //! migration 0015 requires and which is documented in `backend/unix.rs`.
 
+mod auth;
 mod backend;
 mod client;
 mod config;
@@ -49,6 +51,17 @@ fn main() {
         return;
     }
 
+    if has("--login") {
+        match auth::login(&cfg) {
+            Ok(_) => {}
+            Err(msg) => {
+                eprintln!("\nunvelt: sign-in failed.\n{msg}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
+
     if cfg.uid.is_empty() {
         eprintln!(
             "unvelt: UNVELT_UID is not set. Nothing would be attributable, so \
@@ -62,6 +75,12 @@ fn main() {
     let spool = spool::Spool::new(&cfg);
     let hs = handlers::build_default(&cfg);
 
+    if !client.signed_in() {
+        eprintln!(
+            "unvelt: not signed in on this machine -- run `unvelt-agent --login` first.\n\
+             Collecting anyway; the spool keeps everything until a sign-in lets it drain."
+        );
+    }
     if cfg.debug {
         eprintln!(
             "unvelt-agent {VERSION} | did={} | spool={}",
@@ -154,4 +173,12 @@ fn probe(cfg: &config::Config) {
         None => println!("  power        (none)"),
     }
     println!("  tz offset    {} min", envelope::tz_min(now_ms()));
+    println!(
+        "  signed in    {}",
+        if auth::Session::load(cfg).is_some() {
+            "yes"
+        } else {
+            "no -- run --login"
+        }
+    );
 }

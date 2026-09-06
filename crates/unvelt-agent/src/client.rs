@@ -12,20 +12,31 @@
 use std::io::Write;
 use std::time::Duration;
 
+use crate::auth::Session;
 use crate::config::Config;
 
 pub struct ApiClient {
     url: String,
     key: String,
+    /// `None` when nobody has signed in on this machine. The requests still go
+    /// out: the legacy VM gates on `key`, and a 401 from the new ingest is the
+    /// clearest possible signal that `--login` has not been run, far better
+    /// than an agent that silently collects into a spool nothing will drain.
+    session: Option<std::cell::RefCell<Session>>,
     agent: ureq::Agent,
     debug: bool,
 }
 
 impl ApiClient {
+    pub fn signed_in(&self) -> bool {
+        self.session.is_some()
+    }
+
     pub fn new(cfg: &Config) -> Self {
         ApiClient {
             url: cfg.url.clone(),
             key: cfg.key.clone(),
+            session: Session::load(cfg).map(std::cell::RefCell::new),
             agent: ureq::AgentBuilder::new()
                 .timeout_connect(Duration::from_secs(10))
                 .timeout(Duration::from_secs(20))
@@ -45,8 +56,22 @@ impl ApiClient {
         if !self.key.is_empty() {
             req = req.set("X-Compound-Key", &self.key);
         }
+        if let Some(s) = &self.session {
+            if let Some(tok) = s.borrow_mut().id_token() {
+                req = req.set("Authorization", &format!("Bearer {tok}"));
+            } else if self.debug {
+                eprintln!("unvelt: could not refresh the ID token; sending unauthenticated");
+            }
+        }
         match req.send_bytes(&body) {
             Ok(r) => (200..300).contains(&r.status()),
+            Err(ureq::Error::Status(401, _)) => {
+                // Worth saying out loud even when not debugging: an agent that
+                // spools for a week into a 401 is the failure mode this whole
+                // step exists to avoid.
+                eprintln!("unvelt: {path} rejected the request (401). Run `unvelt-agent --login`.");
+                false
+            }
             Err(err) => {
                 if self.debug {
                     eprintln!("unvelt: POST {path} failed: {err}");

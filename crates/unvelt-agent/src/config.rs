@@ -12,7 +12,19 @@ use std::path::PathBuf;
 pub struct Config {
     pub uid: String,
     pub url: String,
+    /// Legacy `X-Compound-Key`. The deployed ingest ignores it -- it verifies
+    /// a Firebase ID token instead -- but the POC VM still gates on it, so it
+    /// stays until nothing points at that host any more.
     pub key: String,
+    /// Identifies the Firebase project to the Identity Toolkit. Not a secret:
+    /// it ships inside every copy of the Android app and authorises nothing on
+    /// its own.
+    pub api_key: String,
+    pub oauth_client_id: String,
+    /// Google issues one alongside a Desktop client. Also not a secret for
+    /// this client type -- it ships in the binary, and PKCE is what actually
+    /// protects the exchange.
+    pub oauth_client_secret: String,
     pub host: String,
     pub osname: &'static str,
     pub did: String,
@@ -56,6 +68,10 @@ fn env_flag(key: &str) -> bool {
     )
 }
 
+/// From android/app/google-services.json. See `api_key` above for why this
+/// is compiled in rather than fetched or hidden.
+const DEFAULT_API_KEY: &str = "AIzaSyC2KeGr";
+
 pub const OSNAME: &str = if cfg!(target_os = "windows") {
     "win"
 } else if cfg!(target_os = "macos") {
@@ -78,6 +94,9 @@ impl Config {
                 .trim_end_matches('/')
                 .to_string(),
             key: env_str("UNVELT_INGEST_KEY", ""),
+            api_key: env_str("UNVELT_FIREBASE_API_KEY", DEFAULT_API_KEY),
+            oauth_client_id: env_str("UNVELT_OAUTH_CLIENT_ID", ""),
+            oauth_client_secret: env_str("UNVELT_OAUTH_CLIENT_SECRET", ""),
             host,
             osname,
             did,
