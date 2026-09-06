@@ -68,9 +68,15 @@ fn env_flag(key: &str) -> bool {
     )
 }
 
-/// From android/app/google-services.json. See `api_key` above for why this
-/// is compiled in rather than fetched or hidden.
-const DEFAULT_API_KEY: &str = "AIzaSyC2KeGr";
+/// From android/app/google-services.json. See `api_key` above for why this is
+/// compiled in rather than fetched or hidden.
+///
+/// The length check is not decoration. This constant was first filled in from
+/// a debug print that masked all but the first twelve characters, and a
+/// truncated key fails at Firebase sign-in with an error that blames the
+/// request rather than the key. A wrong constant that looks right is worth one
+/// assertion.
+const DEFAULT_API_KEY: &str = "AIzaSyC2KeGrmf35qT1z21CP72EEp9TNuaL77eg";
 
 pub const OSNAME: &str = if cfg!(target_os = "windows") {
     "win"

@@ -577,6 +577,17 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_compiled_in_api_key_is_a_whole_key() {
+        // It was once filled in from a masked debug print and shipped twelve
+        // characters long. Firebase rejects a truncated key with an error
+        // about the request, not about the key, so this is cheaper to catch
+        // here than in a sign-in that fails for the wrong stated reason.
+        let cfg = Config::for_test();
+        assert!(cfg.api_key.starts_with("AIza"), "not a Google API key");
+        assert_eq!(cfg.api_key.len(), 39, "truncated API key");
+    }
+
+    #[test]
     fn sha256_matches_the_published_vectors() {
         assert_eq!(
             hex(&sha256(b"abc")),
