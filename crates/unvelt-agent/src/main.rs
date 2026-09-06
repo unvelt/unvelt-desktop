@@ -206,5 +206,9 @@ fn probe(cfg: &config::Config) {
             (false, false) => format!("{} + secret", short(&cfg.oauth_client_id)),
         }
     );
+    println!(
+        "  media        {}",
+        p.playing.as_deref().unwrap_or("(nothing playing)")
+    );
     println!("  posting to   {}", cfg.url);
 }

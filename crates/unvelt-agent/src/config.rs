@@ -96,7 +96,14 @@ impl Config {
         let osname: &'static str = OSNAME;
         // Same default shape as compound/config.py: "<os>-<hostname>".
         let base_did = env_str("UNVELT_DID", &format!("{osname}-{host}"));
-        let did = format!("{base_did}{}", env_str("UNVELT_DID_SUFFIX", "-rs"));
+        // Empty by default. It carried "-rs" while a parity run against the
+        // Python collector was planned -- identical eids under one device id
+        // would have made the server dedupe the two agents against each other
+        // and return a flawless comparison of nothing. That run was dropped:
+        // the Python collector was never itself validated, so it was never a
+        // baseline worth measuring against, and this agent simply takes over
+        // the device id the history is already under.
+        let did = format!("{base_did}{}", env_str("UNVELT_DID_SUFFIX", ""));
 
         Config {
             uid: env_str("UNVELT_UID", ""),

@@ -47,12 +47,16 @@ pub trait Handler {
 mod activity;
 mod focus;
 mod location;
+mod media;
+mod notif;
 mod power;
 mod session;
 
 pub use activity::ActivityHandler;
 pub use focus::FocusHandler;
 pub use location::LocationHandler;
+pub use media::{probe as media_probe, MediaHandler, Now as NowPlaying};
+pub use notif::NotifHandler;
 pub use power::PowerHandler;
 pub use session::SessionHandler;
 
@@ -65,5 +69,11 @@ pub fn build_default(cfg: &Config) -> Vec<Box<dyn Handler>> {
         Box::new(SessionHandler::new(cfg)),
         Box::new(LocationHandler::new(cfg)),
         Box::new(PowerHandler::new(cfg)),
+        // Their own sources, not `desktop.*`: a desktop is a device, not an
+        // event vocabulary, so these are the same `notif.posted` and
+        // `media.play` the phone sends and they feed the intervals and
+        // metrics that already exist.
+        Box::new(NotifHandler::new(cfg)),
+        Box::new(MediaHandler::new(cfg)),
     ]
 }

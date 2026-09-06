@@ -88,6 +88,8 @@ pub struct Probe {
     pub net: Option<String>,
     pub ac: Option<bool>,
     pub battery_pct: Option<u8>,
+    /// What the system media controls currently report, if anything.
+    pub playing: Option<String>,
 }
 
 pub fn probe_once(cfg: &config::Config) -> Probe {
@@ -108,5 +110,27 @@ pub fn probe_once(cfg: &config::Config) -> Probe {
         net: b.net(),
         ac: power.as_ref().map(|p| p.ac),
         battery_pct: power.as_ref().and_then(|p| p.pct),
+        // Three outcomes, kept distinct on purpose. "nothing playing" and
+        // "SMTC refused to answer" look identical from outside and mean
+        // completely different things -- the first is a quiet computer, the
+        // second is a broken binding or a non-interactive session.
+        playing: match handlers::media_probe() {
+            Err(e) => Some(format!("unavailable: {e}")),
+            Ok(None) => None,
+            Ok(Some(n)) => {
+                let what = if n.title.is_empty() {
+                    "(no title)".to_string()
+                } else if n.artist.is_empty() {
+                    n.title.clone()
+                } else {
+                    format!("{} — {}", n.title, n.artist)
+                };
+                Some(format!(
+                    "{} · {} · {what}",
+                    n.app,
+                    if n.playing { "playing" } else { "paused" }
+                ))
+            }
+        },
     }
 }

@@ -16,6 +16,14 @@ serde_json = "1"
 ureq = { version = "2", default-features = false, features = ["tls", "json"] }
 
 [target.'cfg(windows)'.dependencies]
+# The notification store is SQLite. `bundled` compiles it in rather than
+# depending on whatever the machine happens to have, which for an agent that
+# installs without admin rights is the difference between working and not.
+rusqlite = { version = "0.32", features = ["bundled"] }
+# windows-sys covers Win32, but SMTC is WinRT and only the `windows` crate
+# projects it. The two coexist; this one is scoped to the media namespace so
+# it does not pull in the whole surface.
+windows = { version = "0.58", features = ["Media_Control", "Foundation"] }
 # windows-sys rather than the `windows` crate: this is a direct port of ctypes
 # calls, so raw FFI signatures are the closer match and the smaller dependency.
 windows-sys = { version = "0.59", features = [

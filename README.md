@@ -43,7 +43,7 @@ Environment only, and the defaults are the Python collector's.
 | `UNVELT_URL` | `https://compound-kx.duckdns.org` | |
 | `UNVELT_INGEST_KEY` | — | sent as `X-Compound-Key` |
 | `UNVELT_DID` | `<os>-<hostname>` | |
-| `UNVELT_DID_SUFFIX` | `-rs` | see below |
+| `UNVELT_DID_SUFFIX` | *(empty)* | see below |
 | `UNVELT_SAMPLE_SEC` | `5` | base tick and focus poll |
 | `UNVELT_IDLE_SEC` | `180` | idle → away |
 | `UNVELT_RESAMPLE_SEC` | `120` | re-emit an unchanged foreground |
@@ -56,13 +56,26 @@ Environment only, and the defaults are the Python collector's.
 | `UNVELT_SPOOL_MAX_BYTES` | 64 MiB | oldest batches dropped, with a `meta.gap` |
 | `UNVELT_DEBUG` | off | print every event as it is spooled |
 
-**`UNVELT_DID_SUFFIX` exists for the parity window.** Both collectors run on
-the same machine for a week, and the `eid` formulas are identical by design —
-so with the same `did` the server would dedupe one against the other and the
-diff would come back empty for entirely the wrong reason. Set it to the empty
-string when this agent takes over for real.
+**`UNVELT_DID_SUFFIX` was for a parity run that is no longer happening.** The
+plan had been to run this agent beside the Python collector for a week and
+compare; the suffix kept the two apart, because identical `eid` formulas under
+one device id would have made the server dedupe them against each other and
+return a flawless comparison of nothing.
+
+That run was dropped, and for a good reason: the Python collector was itself
+never validated beyond a couple of manual runs, so agreeing with it would have
+proved very little and disagreeing with it would have proved nothing at all. A
+baseline has to be trusted before it is worth measuring against. What replaced
+it is this crate's own tests, plus a direct probe-for-probe comparison of the
+two backends on real hardware.
+
+So the suffix defaults to empty and the agent simply takes over the device id
+the history is already under.
 
 ## What is deliberately the same, and the one thing that is not
+
+(The parity framing below is kept because it explains why the port is shaped
+the way it is, not because a side-by-side run is still planned.)
 
 Same: the envelope and its field order, the `eid` formulas, the spool file
 naming and rotation, the JSONL-over-gzip contract, the five handlers and every
