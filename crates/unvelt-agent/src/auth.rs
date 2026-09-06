@@ -145,16 +145,7 @@ pub fn login(cfg: &Config) -> Result<String, String> {
     let challenge = b64url(&sha256(verifier.as_bytes()));
     let state = random_token();
 
-    let url = format!(
-        "{GOOGLE_AUTH}?client_id={}&redirect_uri={}&response_type=code\
-         &scope={}&code_challenge={}&code_challenge_method=S256&state={}\
-         &access_type=offline&prompt=consent",
-        urlencode(&cfg.oauth_client_id),
-        urlencode(&redirect),
-        urlencode("openid email profile"),
-        challenge,
-        state,
-    );
+    let url = authorize_url(&cfg.oauth_client_id, &redirect, &challenge, &state);
 
     println!("Opening your browser to sign in.");
     println!("If it does not open, paste this:\n\n{url}\n");
@@ -291,11 +282,60 @@ fn query_params(target: &str) -> std::collections::HashMap<String, String> {
     out
 }
 
+/// Google's authorization endpoint, with everything it requires.
+///
+/// Its own function so it can be asserted on. A missing or mangled parameter
+/// here does not fail at build time, at run time, or anywhere we can see — it
+/// fails in the user's browser, as a Google error page, several seconds after
+/// the only person who could debug it has stopped watching.
+fn authorize_url(client_id: &str, redirect: &str, challenge: &str, state: &str) -> String {
+    format!(
+        "{GOOGLE_AUTH}?client_id={}&redirect_uri={}&response_type=code\
+         &scope={}&code_challenge={}&code_challenge_method=S256&state={}\
+         &access_type=offline&prompt=consent",
+        urlencode(client_id),
+        urlencode(redirect),
+        urlencode("openid email profile"),
+        challenge,
+        state,
+    )
+}
+
+/// Hand the URL to whatever the user's default browser is.
+///
+/// On Windows this calls ShellExecuteW rather than going through
+/// `cmd /C start`, and the difference is not stylistic. cmd.exe parses `&` as
+/// a command separator before any quoting the caller does can help, so
+/// `start "" "https://...?client_id=X&response_type=code"` reaches the browser
+/// as everything up to the first `&` — and Google then, correctly, refuses an
+/// authorization request with no `response_type`. An OAuth URL is nothing but
+/// ampersands, so this is the one case where the convenient spawn is
+/// guaranteed to be wrong.
 fn open_browser(url: &str) {
     #[cfg(windows)]
-    let _ = std::process::Command::new("cmd")
-        .args(["/C", "start", "", url])
-        .spawn();
+    {
+        use windows_sys::Win32::UI::Shell::ShellExecuteW;
+        use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+        let wide = |s: &str| {
+            s.encode_utf16()
+                .chain(std::iter::once(0))
+                .collect::<Vec<u16>>()
+        };
+        let op = wide("open");
+        let file = wide(url);
+        unsafe {
+            ShellExecuteW(
+                std::ptr::null_mut(),
+                op.as_ptr(),
+                file.as_ptr(),
+                std::ptr::null(),
+                std::ptr::null(),
+                SW_SHOWNORMAL,
+            );
+        }
+    }
+    // `open` and `xdg-open` take the URL as one argv entry, so no shell ever
+    // sees it and the ampersands are safe.
     #[cfg(target_os = "macos")]
     let _ = std::process::Command::new("open").arg(url).spawn();
     #[cfg(all(unix, not(target_os = "macos")))]
@@ -605,6 +645,42 @@ mod tests {
             )),
             "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"
         );
+    }
+
+    #[test]
+    fn the_authorize_url_carries_every_parameter_google_requires() {
+        let url = authorize_url(
+            "123-abc.apps.googleusercontent.com",
+            "http://127.0.0.1:54321",
+            "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+            "st4te",
+        );
+        let q = url.split_once('?').unwrap().1;
+        let params: std::collections::HashMap<_, _> =
+            q.split('&').filter_map(|p| p.split_once('=')).collect();
+        // response_type is first in this list on purpose: it is the one that
+        // went missing in the field, because `cmd /C start` ate the URL at the
+        // first ampersand and Google reported only the first casualty.
+        for k in [
+            "response_type",
+            "client_id",
+            "redirect_uri",
+            "scope",
+            "code_challenge",
+            "code_challenge_method",
+            "state",
+            "access_type",
+        ] {
+            assert!(params.contains_key(k), "{k} missing from {url}");
+        }
+        assert_eq!(params["response_type"], "code");
+        assert_eq!(params["code_challenge_method"], "S256");
+        assert_eq!(params["access_type"], "offline");
+        assert_eq!(params["redirect_uri"], "http%3A%2F%2F127.0.0.1%3A54321");
+        // A line continuation inside the format string that failed to eat its
+        // indentation would leave spaces in the query, which a browser then
+        // silently encodes into the value of whichever parameter preceded it.
+        assert!(!q.contains(' '), "whitespace leaked into the query: {q}");
     }
 
     #[test]
