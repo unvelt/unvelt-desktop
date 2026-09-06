@@ -11,7 +11,9 @@
 //! rather than a second implementation of it — and so this CLI keeps working
 //! as the thing to reach for when the window is the part that is broken.
 
-use unvelt_agent::{auth, backend, client, config, controller, envelope, handlers, spool, VERSION};
+use unvelt_agent::{
+    auth, backend, client, config, controller, envelope, handlers, instance, spool, VERSION,
+};
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -47,6 +49,26 @@ fn main() {
         );
         std::process::exit(2);
     }
+
+    // Taken before anything is built, and only for the run that collects:
+    // --probe, --login and --once have all returned by now. Two loops on one
+    // machine post every signal twice under the same device id, and because
+    // eids carry a millisecond they do not dedupe -- the day just reads as
+    // twice as busy as it was.
+    let _lock = if has("--once") {
+        None
+    } else {
+        match instance::acquire() {
+            Some(l) => Some(l),
+            None => {
+                eprintln!(
+                    "unvelt: another unvelt collector is already running for this user.\n\
+                     Quit it from the tray first -- two would double-count everything."
+                );
+                std::process::exit(3);
+            }
+        }
+    };
 
     let backend = backend::make_backend(&cfg);
     let client = client::ApiClient::new(&cfg);

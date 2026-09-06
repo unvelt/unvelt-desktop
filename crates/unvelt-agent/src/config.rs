@@ -174,6 +174,16 @@ fn read_hostname_fallback() -> String {
     }
 }
 
+/// Where this machine keeps unvelt's own state: the spool, the session and
+/// the instance lock. One directory so that "delete everything unvelt kept
+/// here" is one directory to delete.
+pub fn state_dir() -> PathBuf {
+    spool_dir()
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(std::env::temp_dir)
+}
+
 fn spool_dir() -> PathBuf {
     if let Ok(d) = std::env::var("UNVELT_SPOOL_DIR") {
         if !d.trim().is_empty() {

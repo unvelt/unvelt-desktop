@@ -23,6 +23,7 @@ pub mod config;
 pub mod controller;
 pub mod envelope;
 pub mod handlers;
+pub mod instance;
 pub mod spool;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -56,6 +57,9 @@ pub struct Status {
     pub last_flush_ms: Option<i64>,
     pub events_spooled: u64,
     pub collecting: bool,
+    /// True when another unvelt already holds the collector lock, so this
+    /// process is a window onto someone else's loop and is reading nothing.
+    pub duplicate: bool,
 }
 
 /// What one probe of this machine currently answers.

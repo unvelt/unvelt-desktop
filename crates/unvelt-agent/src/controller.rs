@@ -63,6 +63,7 @@ impl Controller {
             last_flush_ms: None,
             events_spooled: 0,
             collecting: true,
+            duplicate: false,
         };
         Controller {
             cfg,

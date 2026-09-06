@@ -171,7 +171,14 @@ async function draw() {
 
   const ribbon = $("ribbon");
   ribbon.className = "ribbon" + (paused ? " paused" : st.signed_in ? "" : " blocked");
-  if (!st.signed_in) {
+  if (st.duplicate) {
+    // Not an error: this window is useful, it just is not the one reading the
+    // machine. Say which, so nobody quits the wrong one.
+    ribbon.className = "ribbon blocked";
+    $("stateTitle").textContent = "Another unvelt is collecting";
+    $("stateSub").textContent =
+      "This window is watching it. Two collectors would count the same day twice.";
+  } else if (!st.signed_in) {
     $("stateTitle").textContent = "Collecting, but not signed in";
     $("stateSub").textContent =
       "Everything is kept on this machine until you sign in. Nothing is lost.";

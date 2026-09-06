@@ -26,7 +26,9 @@ use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{Emitter, Manager};
 
-use unvelt_agent::{auth, backend, client, config, controller, handlers, spool, Probe, Status};
+use unvelt_agent::{
+    auth, backend, client, config, controller, handlers, instance, spool, Probe, Status,
+};
 
 /// What the commands are allowed to reach.
 ///
@@ -37,10 +39,23 @@ struct App {
     status: Arc<Mutex<Status>>,
     paused: Arc<AtomicBool>,
     cfg: config::Config,
+    /// False when another unvelt already holds the collector lock. This
+    /// instance then shows the window and reads nothing, rather than
+    /// double-counting the day.
+    collecting: bool,
 }
 
 #[tauri::command]
 fn status(app: tauri::State<'_, App>) -> Status {
+    let mut st = current(&app);
+    if !app.collecting {
+        st.collecting = false;
+        st.duplicate = true;
+    }
+    st
+}
+
+fn current(app: &tauri::State<'_, App>) -> Status {
     app.status.lock().map(|s| s.clone()).unwrap_or_else(|e| {
         // A poisoned lock means a collector thread panicked mid-publish. The
         // snapshot is still readable and still true as of that panic, which is
@@ -94,12 +109,37 @@ fn show_window(app: &tauri::AppHandle) {
 
 fn main() {
     tauri::Builder::default()
+        // Runs in the FIRST instance when a second is launched; the second
+        // then exits on its own. Someone double-clicking the icon wants the
+        // window, not a second copy of the tray icon and a puzzle about which
+        // one is collecting.
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            show_window(app);
+        }))
         .invoke_handler(tauri::generate_handler![status, probe, set_paused, login])
         .setup(|app| {
             // The controller owns a `Box<dyn Backend>`, which is not Send, so
             // it is built inside its own thread and only its handles come
             // back out. That is also the honest arrangement: nothing outside
             // that thread can touch the loop.
+            // One collector per user. The single-instance plugin above
+            // already stops a second copy of the APP; this mutex is what
+            // stops the CLI collector running alongside it, which the plugin
+            // knows nothing about. Two loops post every signal twice under
+            // one device id, and eids carry a millisecond, so the duplicates
+            // do not dedupe -- the day simply reads as twice as busy.
+            //
+            // If the lock is somehow held anyway, the app still opens: it
+            // becomes a window onto the collector that IS running rather than
+            // refusing to start, and says so.
+            let lock = instance::acquire();
+            let collecting = lock.is_some();
+            if collecting {
+                // Held for the life of the process; the OS releases it if we
+                // die, which is what makes it safe after a crash.
+                std::mem::forget(lock);
+            }
+
             let (tx, rx) = std::sync::mpsc::channel();
             std::thread::Builder::new()
                 .name("unvelt-collector".into())
@@ -120,7 +160,9 @@ fn main() {
                     let hs = handlers::build_default(&cfg);
                     let mut ctl = controller::Controller::new(cfg.clone(), cl, sp, hs, backend);
                     let _ = tx.send((ctl.status_handle(), ctl.pause_flag(), ctl.stop_flag(), cfg));
-                    ctl.run();
+                    if collecting {
+                        ctl.run();
+                    }
                 })?;
             let (status, paused, stop, cfg) = rx
                 .recv()
@@ -130,6 +172,7 @@ fn main() {
                 status,
                 paused: paused.clone(),
                 cfg,
+                collecting,
             });
 
             let open = MenuItem::with_id(app, "open", "Status…", true, None::<&str>)?;
@@ -149,7 +192,7 @@ fn main() {
             // Tray-only on every later launch, but not the first. Someone who
             // has never signed in would otherwise get a new icon in a tray of
             // twenty and no reason to think it wanted anything from them.
-            if auth::Session::load(&app.state::<App>().cfg).is_none() {
+            if auth::Session::load(&app.state::<App>().cfg).is_none() || !collecting {
                 show_window(app.handle());
             }
 
