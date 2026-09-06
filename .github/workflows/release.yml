@@ -84,14 +84,29 @@ jobs:
             target/${{ matrix.target }}/release/bundle/deb/*.deb
             target/${{ matrix.target }}/release/bundle/appimage/*.AppImage
 
+      # Renamed per target before upload. The release flattens every path to
+      # its basename, so the macOS and Linux agents -- both plain
+      # `unvelt-agent` -- collided and one silently overwrote the other. A
+      # Linux user would have downloaded a Mach-O binary and been told it was
+      # not executable, with nothing anywhere explaining why.
+      - name: Name the agent for its platform
+        shell: bash
+        run: |
+          cd target/${{ matrix.target }}/release
+          if [ -f unvelt-agent.exe ]; then
+            mv unvelt-agent.exe unvelt-agent-${{ matrix.target }}.exe
+          else
+            mv unvelt-agent unvelt-agent-${{ matrix.target }}
+          fi
+
       - name: Agent
         uses: actions/upload-artifact@v4
         with:
           name: unvelt-agent-${{ matrix.target }}
           if-no-files-found: error
           path: |
-            target/${{ matrix.target }}/release/unvelt-agent
-            target/${{ matrix.target }}/release/unvelt-agent.exe
+            target/${{ matrix.target }}/release/unvelt-agent-${{ matrix.target }}
+            target/${{ matrix.target }}/release/unvelt-agent-${{ matrix.target }}.exe
 
   publish:
     needs: build
@@ -102,9 +117,12 @@ jobs:
         with: { path: dist }
       # The tap's cask verifies this. A cask with a stale or absent checksum
       # is a cask that installs whatever it is handed.
+      # `-not -name SHA256SUMS` because the first run hashed the file it was
+      # in the middle of writing and recorded the checksum of an empty one.
       - name: Checksums
         run: |
-          find dist -type f | sort | xargs shasum -a 256 | tee dist/SHA256SUMS
+          find dist -type f -not -name SHA256SUMS | sort             | xargs shasum -a 256 | sed 's#dist/[^/]*/##' > dist/SHA256SUMS
+          cat dist/SHA256SUMS
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/**/*
